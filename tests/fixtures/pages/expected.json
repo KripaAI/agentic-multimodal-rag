@@ -70,6 +70,20 @@
     "counts": {"vector_figure": 0, "image": 1, "table": 1, "scanned_page": 0},
     "table_columns": [["Method", "Core training signal / idea"]]
   },
+  "llm_notes_p054": {
+    "why": "owner review: a one-row formula/code block is not a table; its text must stay as text",
+    "counts": {"vector_figure": 0, "image": 0, "table": 0, "scanned_page": 0},
+    "text_contains": ["Objective ~= mean"]
+  },
+  "llm_notes_p055": {
+    "why": "owner review: the GRPO ratios table was also extracted as a vector figure (its frame lies just outside the table box)",
+    "counts": {"vector_figure": 0, "image": 0, "table": 2, "scanned_page": 0},
+    "table_columns": [["Quantity", "Comparison", "Purpose"], ["Reward-shaped description", "DeepSeekMath-style objective description"]]
+  },
+  "buildig_p056": {
+    "why": "owner review: a thin strip of highlights behind inline code words is not a figure",
+    "counts": {"vector_figure": 0, "image": 0, "table": 0, "scanned_page": 0}
+  },
   "post_training_p022": {
     "why": "dark code block (must not be a table or figure), two images with 'Figure 6.x:' captions",
     "counts": {"vector_figure": 0, "image": 2, "table": 0, "scanned_page": 0},

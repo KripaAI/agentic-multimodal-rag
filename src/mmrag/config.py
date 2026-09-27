@@ -37,6 +37,7 @@ class Parse(_Section):
     callout_text_coverage: float = Field(gt=0, le=1)
     callout_min_chars: int = Field(ge=0)
     min_figure_pt: float = Field(ge=0)
+    min_figure_short_pt: float = Field(ge=0)
     figure_margin_pt: float = Field(ge=0)
     label_attach_pt: float = Field(ge=0)
     side_note_gap_pt: float = Field(ge=0)

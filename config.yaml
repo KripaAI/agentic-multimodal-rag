@@ -15,6 +15,7 @@ parse:
   callout_text_coverage: 0.3        # a box this full of text (code, text card) is not a figure...
   callout_min_chars: 100            # ...when it holds at least this many characters
   min_figure_pt: 72                 # figures smaller than 1 inch each way are icons
+  min_figure_short_pt: 40           # figures thinner than this are highlight strips (smallest real: 61)
   figure_margin_pt: 6               # padding around a rendered figure
   label_attach_pt: 32               # small-font text / text cards this close to a figure belong to it
   side_note_gap_pt: 72              # small-font notes level with a figure, up to 1 inch to its side
