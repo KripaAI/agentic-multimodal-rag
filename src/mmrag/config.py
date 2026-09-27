@@ -39,6 +39,7 @@ class Parse(_Section):
     min_figure_pt: float = Field(ge=0)
     figure_margin_pt: float = Field(ge=0)
     label_attach_pt: float = Field(ge=0)
+    side_note_gap_pt: float = Field(ge=0)
     caption_gap_pt: float = Field(ge=0)
     heading_size_margin_pt: float = Field(ge=0)
     heading_max_chars: int = Field(gt=0)

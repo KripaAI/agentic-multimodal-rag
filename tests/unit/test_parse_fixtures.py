@@ -6,6 +6,7 @@ import json
 import re
 from collections import Counter
 
+import pymupdf
 import pytest
 
 from mmrag.config import PROJECT_ROOT
@@ -51,6 +52,29 @@ def test_figure_captions(results, name):
     assert len(captions) == len(expected)
     for got, want in zip(captions, expected):
         assert got.startswith(want), (got, want)
+
+
+@pytest.mark.parametrize("name", [n for n, e in EXPECTED.items() if "figure_must_cover" in e])
+def test_figures_cover_all_their_parts(results, name):
+    """Owner-reported parts (text cards, side notes, headers) lie inside their figure's box."""
+    _, res = results
+    figures = [e for e in res[name].elements if e.type == "vector_figure" and e.status == "ok"]
+    expected = EXPECTED[name]["figure_must_cover"]
+    assert len(figures) == len(expected)
+    for fig, parts in zip(figures, expected):
+        x0, y0, x1, y1 = fig.bbox
+        for px0, py0, px1, py1 in parts:
+            assert x0 <= px0 + 1 and y0 <= py0 + 1 and x1 >= px1 - 1 and y1 >= py1 - 1, (fig.bbox, [px0, py0, px1, py1])
+
+
+@pytest.mark.parametrize("name", [n for n, e in EXPECTED.items() if "figure_must_not_cover" in e])
+def test_figures_leave_page_text_alone(results, name):
+    """Text boxes in the page flow next to a figure are not swallowed by it."""
+    _, res = results
+    figures = [e for e in res[name].elements if e.type == "vector_figure" and e.status == "ok"]
+    for fig, parts in zip(figures, EXPECTED[name]["figure_must_not_cover"]):
+        for part in parts:
+            assert not pymupdf.Rect(fig.bbox).intersects(pymupdf.Rect(part)), (fig.bbox, part)
 
 
 @pytest.mark.parametrize("name", [n for n, e in EXPECTED.items() if "table_columns" in e])

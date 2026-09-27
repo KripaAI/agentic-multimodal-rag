@@ -12,6 +12,45 @@
     "figure_captions": ["Greedy takes the tallest bar", "Temperature doesn't change"],
     "headings": ["Random sampling", "Temperature", "Top-K", "Top-P (nucleus sampling)"]
   },
+  "transformers_p009": {
+    "why": "owner review: the red side note 'Your parser breaks 3 times out of 4.' belongs to figure 1",
+    "counts": {"vector_figure": 2, "image": 0, "table": 0, "scanned_page": 0},
+    "figure_captions": ["Prompting for structure", "Constrained decoding turns"],
+    "figure_must_cover": [[[454, 223, 501, 255]], []]
+  },
+  "transformers_p011": {
+    "why": "owner review: the 'Source document' text card belongs to the chunking figure",
+    "counts": {"vector_figure": 2, "image": 0, "table": 0, "scanned_page": 0},
+    "figure_captions": ["A chunk boundary in the wrong place", "Put the most important retrieved chunk"],
+    "figure_must_cover": [[[57, 157, 280, 238]], []]
+  },
+  "transformers_p016": {
+    "why": "owner review: the Q/K/V diagram is a figure (not a table) and includes its side descriptions",
+    "counts": {"vector_figure": 1, "image": 0, "table": 0, "scanned_page": 0},
+    "figure_captions": ["Three projections of the same input"],
+    "figure_must_cover": [[[52, 398, 258, 483], [269, 397, 427, 481]]]
+  },
+  "transformers_p023": {
+    "why": "owner review: the logits diagram is one figure (not a table + half figure); the 'Weight tying' text box above it is page text",
+    "counts": {"vector_figure": 1, "image": 0, "table": 0, "scanned_page": 0},
+    "figure_captions": ["The last vector becomes logits"],
+    "figure_must_cover": [[[54, 394, 277, 425]]],
+    "figure_must_not_cover": [[[58, 222, 536, 298]]]
+  },
+  "transformers_p029": {
+    "why": "owner review: the speculative-decoding rows and the 'checks all 4' box are one figure",
+    "counts": {"vector_figure": 2, "image": 0, "table": 0, "scanned_page": 0},
+    "figure_captions": ["Same arithmetic, same result", "Three tokens accepted"],
+    "figure_must_cover": [[], [[51, 510, 465, 569], [475, 521, 540, 563], [72, 579, 501, 656]]]
+  },
+  "transformers_p031": {
+    "why": "owner review: the tall bar and the two panel headers belong to the chart",
+    "counts": {"vector_figure": 1, "image": 0, "table": 1, "scanned_page": 0},
+    "figure_captions": ["The benchmark measured one point"],
+    "figure_must_cover": [[[95, 318, 124, 368], [132, 297, 464, 307]]],
+    "figure_must_not_cover": [[[58, 148, 535, 272]]],
+    "table_columns": [["Benchmark prompt", "Real user prompt"]]
+  },
   "buildig_p029": {
     "why": "raster figure with 'Figure 8.' caption, a table with only horizontal rules, callout and formula boxes (not figures)",
     "counts": {"vector_figure": 0, "image": 1, "table": 1, "scanned_page": 0},

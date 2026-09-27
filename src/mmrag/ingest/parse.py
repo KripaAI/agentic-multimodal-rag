@@ -182,8 +182,12 @@ def parse_document(path: Path, settings: Settings) -> ParseResult:
                     n = page.number + 1
                     page_tables = detect_tables(page, blocks, ctx)
                     images = extract_images(page, blocks, ctx)
-                    masks = [e.bbox for e, _ in page_tables] + [e.bbox for e in images if e.status == "ok"]
+                    # A low-confidence "table" may really be diagram boxes, so its drawings stay
+                    # visible to figure detection; if a figure then covers it, the figure wins.
+                    masks = ([e.bbox for e, t in page_tables if not t.low_confidence]
+                             + [e.bbox for e in images if e.status == "ok"])
                     figures = detect_vector_figures(page, blocks, masks, body_size, ctx)
+                    page_tables = _drop_tables_inside_figures(page_tables, figures, ctx)
                     exclude = [pymupdf.Rect(e.bbox) for e, _ in page_tables] + [pymupdf.Rect(f.bbox) for f in figures]
                     texts = extract_text_blocks(page, blocks, exclude, body_size, ctx)
 
@@ -501,35 +505,53 @@ def detect_tables(page: pymupdf.Page, blocks: list[TextBlock], ctx: ParseContext
     return out
 
 
+def _drop_tables_inside_figures(
+    tables: list[tuple[Element, Table]], figures: list[Element], ctx: ParseContext
+) -> list[tuple[Element, Table]]:
+    """Low-confidence tables overlapping a figure were diagram boxes read as cells; their
+    text now belongs to the figure's labels."""
+    kept = []
+    for e, t in tables:
+        if t.low_confidence and any(pymupdf.Rect(e.bbox).intersects(pymupdf.Rect(f.bbox)) for f in figures):
+            if e.asset_path:
+                ctx.asset(e.element_id)[0].unlink(missing_ok=True)
+            _log.info("table %s is part of a figure, not a table", e.element_id)
+            continue
+        kept.append((e, t))
+    return kept
+
+
 # ---------------------------------------------------------------- vector figures
 
 def detect_vector_figures(
     page: pymupdf.Page, blocks: list[TextBlock], masks: list[BBox], body_size: float, ctx: ParseContext
 ) -> list[Element]:
     """The 5-step filter of spec §6.1. `masks` are table and image boxes whose drawings
-    are never figures. Rejected clusters go to `ctx.rejected`."""
+    are never figures. Rejected clusters go to `ctx.rejected`, unless they turn out to be
+    part of a figure (see `_absorb_parts`)."""
     cfg = ctx.cfg
     n = page.number + 1
     drawings = _mask_regions(page.get_drawings(), masks)
     drawings = _drop_page_furniture(drawings, page.rect, cfg)
 
-    def reject(region: pymupdf.Rect, reason: str, shapes: int) -> None:
+    kept, parts = [], []
+    for cluster in _cluster_drawings(drawings, cfg):
+        reason = _classify_cluster(cluster, blocks, body_size, cfg)
+        if reason is None:
+            kept.append((_figure_region(cluster, blocks, body_size, cfg), len(cluster)))
+        else:
+            parts.append((_union([d["rect"] for d in cluster]), reason, len(cluster)))
+
+    regions = _merge_by_caption(_merge_regions(kept, cfg.cluster_merge_distance_pt), blocks, cfg)
+    figures = [(r, s) for r, s in regions if max(r.width, r.height) >= cfg.min_figure_pt]
+    parts += [(r, "too_small", s) for r, s in regions if max(r.width, r.height) < cfg.min_figure_pt]
+    figures, leftover = _absorb_parts(figures, parts, blocks, body_size, cfg)
+    for region, reason, shapes in leftover:
         ctx.rejected.append(RejectedRegion(doc_id=ctx.doc_id, page=n, bbox=_bbox(region), filter=reason,
                                            shape_count=shapes))
 
-    kept = []
-    for cluster in _cluster_drawings(drawings, cfg):
-        reason = _classify_cluster(cluster, blocks, body_size, cfg)
-        if reason:
-            reject(_union([d["rect"] for d in cluster]), reason, len(cluster))
-        else:
-            kept.append((_figure_region(cluster, blocks, body_size, cfg), len(cluster)))
-
     out = []
-    for region, shapes in _merge_by_caption(_merge_regions(kept), blocks, cfg):
-        if max(region.width, region.height) < cfg.min_figure_pt:
-            reject(region, "too_small", shapes)  # icons and bullets next to headings
-            continue
+    for region, _ in figures:
         labels = [b for b in blocks if _center_in(b.bbox, region)]
         caption = find_figure_caption(blocks, region, cfg)
         region = (region + (-cfg.figure_margin_pt, -cfg.figure_margin_pt, cfg.figure_margin_pt, cfg.figure_margin_pt)) & page.rect
@@ -621,30 +643,81 @@ def _is_label(block: TextBlock, body_size: float, cfg: Parse) -> bool:
 
 
 def _figure_region(cluster: list[dict], blocks: list[TextBlock], body_size: float, cfg: Parse) -> pymupdf.Rect:
-    """Step 5: the cluster's box, grown to take in small-font labels within `label_attach_pt`
-    (titles, axis labels, annotations), repeated until nothing more attaches."""
-    region = _union([d["rect"] for d in cluster])
+    """Step 5: the cluster's box, grown to take in its labels."""
+    return _grow_with_labels(_union([d["rect"] for d in cluster]), blocks, body_size, cfg)
+
+
+def _absorb_parts(
+    figures: list[tuple[pymupdf.Rect, int]],
+    parts: list[tuple[pymupdf.Rect, str, int]],
+    blocks: list[TextBlock],
+    body_size: float,
+    cfg: Parse,
+) -> tuple[list[tuple[pymupdf.Rect, int]], list[tuple[pymupdf.Rect, str, int]]]:
+    """Clusters rejected on their own (a text card, a lone bar, a small box) that lie within
+    `label_attach_pt` of a figure, or share its caption, are part of that figure. Page rules
+    (`isolated_shape`) and boxes of body-size text (notes in the page flow) never join.
+    Returns the grown figures and the parts left over."""
+    def joinable(part: tuple[pymupdf.Rect, str, int]) -> bool:
+        region, reason, _ = part
+        inside = [b for b in blocks if _center_in(b.bbox, region)]
+        chars = sum(b.chars for b in inside)
+        body_chars = sum(b.chars for b in inside if b.size >= body_size - 1)
+        return reason != "isolated_shape" and not (chars and body_chars >= 0.5 * chars)
+
+    figures = list(figures)
+    pending = [p for p in parts if joinable(p)]
+    leftover = [p for p in parts if not joinable(p)]
+    joined = True
+    while joined:
+        joined = False
+        for part in pending:
+            region, _, shapes = part
+            caption = _caption_block(blocks, region, cfg)
+            for i, (fig, fig_shapes) in enumerate(figures):
+                near = _rect_distance(region, fig) <= cfg.label_attach_pt
+                same_caption = caption is not None and caption is _caption_block(blocks, fig, cfg)
+                if near or same_caption:
+                    figures[i] = (_grow_with_labels(fig | region, blocks, body_size, cfg), fig_shapes + shapes)
+                    pending.remove(part)
+                    joined = True
+                    break
+            if joined:
+                break
+    return _merge_regions(figures, cfg.cluster_merge_distance_pt), leftover + pending
+
+
+def _grow_with_labels(region: pymupdf.Rect, blocks: list[TextBlock], body_size: float, cfg: Parse) -> pymupdf.Rect:
+    """Grow a region to take in small-font labels within `label_attach_pt` (titles, axis
+    labels, annotations), or beside it within `side_note_gap_pt` (side notes level with the
+    figure), repeated until nothing more attaches."""
+    def beside(b: TextBlock) -> bool:
+        cy = (b.bbox.y0 + b.bbox.y1) / 2
+        gap = max(b.bbox.x0 - region.x1, region.x0 - b.bbox.x1)
+        return region.y0 <= cy <= region.y1 and 0 <= gap <= cfg.side_note_gap_pt
+
+    region = pymupdf.Rect(region)
     labels = [b for b in blocks if _is_label(b, body_size, cfg)]
     grown = True
     while grown:
         grown = False
         for b in labels:
-            if not region.contains(b.bbox) and _rect_distance(b.bbox, region) <= cfg.label_attach_pt:
+            if not region.contains(b.bbox) and (_rect_distance(b.bbox, region) <= cfg.label_attach_pt or beside(b)):
                 region |= b.bbox
                 grown = True
     return region
 
 
-def _merge_regions(regions: list[tuple[pymupdf.Rect, int]]) -> list[tuple[pymupdf.Rect, int]]:
-    """Merge overlapping figure regions (e.g. chart panels sharing a title line), adding
-    up their shape counts."""
+def _merge_regions(regions: list[tuple[pymupdf.Rect, int]], gap: float = 0.0) -> list[tuple[pymupdf.Rect, int]]:
+    """Merge figure regions that overlap or lie within `gap` of each other (e.g. chart panels
+    sharing a title line, rows of one diagram), adding up their shape counts."""
     regions = [(pymupdf.Rect(r), n) for r, n in regions]
     merged = True
     while merged:
         merged = False
         for i in range(len(regions)):
             for j in range(i + 1, len(regions)):
-                if regions[i][0].intersects(regions[j][0]):
+                if _rect_distance(regions[i][0], regions[j][0]) <= gap:
                     r, n = regions.pop(j)
                     regions[i] = (regions[i][0] | r, regions[i][1] + n)
                     merged = True
@@ -669,7 +742,7 @@ def _merge_by_caption(
         if caption is not None:
             by_caption[id(caption)] = len(out)
         out.append((region, shapes))
-    return _merge_regions(out)  # a merged region may now overlap a neighbour
+    return _merge_regions(out, cfg.cluster_merge_distance_pt)  # a merged region may now touch a neighbour
 
 
 # ---------------------------------------------------------------- textless pages
