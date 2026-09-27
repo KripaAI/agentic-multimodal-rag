@@ -1,0 +1,4 @@
+# Development and test dependencies (constitution W5)
+-r requirements.txt
+pytest
+pytest-cov

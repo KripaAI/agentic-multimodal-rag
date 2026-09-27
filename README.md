@@ -45,6 +45,17 @@ Requirements: Python 3.11, Docker Desktop.
 
    Then set `agent.model`, `agent.summary_model` and `eval.judge_model` in `config.yaml`.
 
+## Tests
+
+Development is test-driven where it fits (constitution W5, LLD §10). Install the test tools with `pip install -r requirements-dev.txt`.
+
+| Command | Runs |
+|---|---|
+| `.venv\Scripts\python -m pytest` | Unit and integration tests. Needs `docker compose up -d`; each integration test uses its own throwaway database. |
+| `.venv\Scripts\python -m pytest -m unit` | Fast tests only, no services needed |
+| `.venv\Scripts\python -m pytest -m live` | Real OpenAI calls (costs a fraction of a cent); run on request |
+| `.venv\Scripts\python -m pytest --cov=mmrag` | With a coverage report |
+
 ## Layout
 
 | Path | Contents |
@@ -52,6 +63,7 @@ Requirements: Python 3.11, Docker Desktop.
 | `config.yaml` | All tunable settings (no secrets) |
 | `src/mmrag/` | Application code |
 | `db/migrations/` | Versioned SQL schema files |
+| `tests/` | `unit/`, `integration/`, `live/` test suites; `fixtures/` for sample pages |
 | `data/pdfs/` | Source PDFs (the knowledge base) |
 | `data/` (other folders) | Generated files: elements, figures, captions, caches, logs |
 | `gpu_job/` | Kaggle/Colab captioning notebook (Phase 2) |

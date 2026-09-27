@@ -16,8 +16,12 @@ _MIGRATION_NAME = re.compile(r"^(\d{4})_[a-z0-9_]+\.sql$")
 _log = get_logger("mmrag.db")
 
 
-def connect(settings: Settings, *, register_vectors: bool = True) -> psycopg.Connection:
-    conn = psycopg.connect(settings.secrets.database_url.get_secret_value(), connect_timeout=10)
+def connect(
+    settings: Settings, *, register_vectors: bool = True, autocommit: bool = False
+) -> psycopg.Connection:
+    conn = psycopg.connect(
+        settings.secrets.database_url.get_secret_value(), connect_timeout=10, autocommit=autocommit
+    )
     if register_vectors:
         try:
             register_vector(conn)
@@ -38,15 +42,18 @@ def _migration_files() -> list[tuple[str, Path]]:
 
 
 def migrate(settings: Settings) -> list[str]:
-    """Apply pending migrations in order, each in its own transaction."""
+    """Apply pending migrations in order, each in its own transaction.
+
+    Autocommit mode makes every `conn.transaction()` a real top-level
+    transaction, so a failing migration never undoes earlier ones.
+    """
     applied_now = []
-    with connect(settings, register_vectors=False) as conn:
+    with connect(settings, register_vectors=False, autocommit=True) as conn:
         conn.execute(
             "CREATE TABLE IF NOT EXISTS schema_migrations ("
             " version text PRIMARY KEY,"
             " applied_at timestamptz NOT NULL DEFAULT now())"
         )
-        conn.commit()
         done = {row[0] for row in conn.execute("SELECT version FROM schema_migrations")}
         for version, path in _migration_files():
             if version in done:

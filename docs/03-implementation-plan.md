@@ -1,6 +1,6 @@
 # Implementation Plan — Agentic Multimodal RAG
 
-**Status:** Draft v0.7 (RAGAS evaluation added; see spec §12) · **Date:** 2026-09-26 · **Implements:** [02-technical-specification.md](02-technical-specification.md) · **Governed by:** [01-constitution.md](01-constitution.md)
+**Status:** Draft v0.8 (test-driven development added; see spec §12) · **Date:** 2026-09-26 · **Implements:** [02-technical-specification.md](02-technical-specification.md) · **Governed by:** [01-constitution.md](01-constitution.md)
 
 ---
 
@@ -10,6 +10,10 @@
 - Each phase ends with a **gate**: the owner reviews the deliverables against the acceptance criteria and signs off (W3).
 - Phases 1–4 are built on **one PDF first** (Buildig-multimodal-rag.pdf, the most figure-heavy) and extended to the full corpus in Phase 5.
 - Effort estimates are rough, in focused working sessions, and will be refined after Phase 1.
+- **Testing (constitution W5, LLD §10):** every phase's acceptance criteria also include:
+  1. The **full automated test suite passes**.
+  2. The phase's new behaviour is **covered by tests**, written *before* the code for deterministic logic, and written from the owner-approved results for exploratory parts.
+  3. The phase summary reports the number of tests and the pass result.
 
 ## Phase overview
 
@@ -46,6 +50,7 @@
    - Add the Phoenix trace viewer to `docker-compose.yml`.
    - Set up OpenTelemetry (traces, JSON logs with `trace_id`, metrics) in `mmrag/obs/`.
 8. Optionally initialize a git repository for version history.
+9. **Retrofit tests (W5, added after Phase 0):** replace the manual checks with automated tests: config validation, JSON logs carrying trace IDs, telemetry failure safety, migrations (order and re-run), pgvector/HNSW, and `mmrag check` exit codes. A separate `mmrag_test` database is used; one `live` test covers OpenAI embeddings.
 
 **Deliverables:** environment set up, config skeleton, decisions recorded in the spec.
 
@@ -80,6 +85,10 @@
 7. **Review sheet:** a simple HTML page showing every detected figure and table next to its page, so the owner can check detection quality by eye. It also lists regions that were **rejected** by the filters, so wrongly discarded diagrams are visible.
 8. **Threshold tuning:** adjust the clustering and filter thresholds using the review sheet. Target cases: table grids mistaken for diagrams, two diagrams merged into one, and box-and-arrow diagrams wrongly dropped. Record the final values in config.
 9. **Tracing:** each parse run is one `ingest.document` trace with a span per step. Page, element and skip counts are span attributes.
+10. **Tests (W5):**
+    - **Fixture pages first:** sample pages cut from the PDFs (a table grid, a box-and-arrow diagram, a textless page, and a page from each other PDF), each with expected element counts written **before** the parser.
+    - Unit tests for IDs, heading detection, the furniture and isolated-shape filters.
+    - After threshold tuning, the owner-approved review-sheet results are frozen as regression tests.
 
 **Deliverables:** `elements.jsonl`, `assets/*.png`, `tables.jsonl`, profile report, skip log, review sheet.
 
@@ -145,6 +154,13 @@
 8. **Hybrid search query** (spec §7.1): semantic top 30 + keyword top 30 → RRF → top *k*, in one SQL query per collection. Element locations are aggregated into one array per chunk, so each chunk is one row.
 9. **Retrieval test script:** a fixed list of about 15 queries, showing the top results per collection. It includes at least 3 table-targeted queries phrased in words, not cell values, and at least 3 exact-term queries (acronyms such as "GSM8K" or "LoRA") to check the `simple` keyword index.
 10. **Tracing:** enrich, chunk, embed and the database write are spans in the same ingestion trace. LLM and embedding calls carry model, tokens and cost.
+11. **Tests (W5), test-first:**
+    - chunk boundaries (never crossing a section), and chunk and element IDs;
+    - figure-linking rules, and table document splitting;
+    - RRF scoring, and "each chunk appears once";
+    - transactional writes: a failure injected mid-document leaves the old version intact; an unchanged re-ingest is a no-op; cascade delete.
+
+    These run against the `mmrag_test` database.
 
 **Deliverables:** migrations, populated PostgreSQL database, hybrid search query, retrieval test report.
 
@@ -177,6 +193,11 @@
 7. **Tracing and logging (spec §7.7, LLD §5.9):**
    - One trace per question: plan, each round, each tool call, LLM calls, SQL searches, chart rendering, validation, repair.
    - `trace_id`, rounds used, latency, tokens and cost stored in `query_log`.
+8. **Tests (W5), test-first:**
+   - `compute` whitelist, and chart validation (values ∈ evidence, pie → bar fallback, "approximate" flag);
+   - validator rules and citation hydration, and bbox conversion;
+   - tool argument validation;
+   - agent loop termination and round limits, using a **mocked OpenAI client** (no API cost).
 
 **Deliverables:** working agent from the CLI; HTML answer output; per-query cost log.
 
@@ -263,6 +284,14 @@
    - Audit events.
 9. **Per-user limits and history:** daily question and cost limits are checked before each question; each user sees only their own chat history.
 10. **Admin metrics page (FR-22):** questions per day, error rate, slowest answers (linked to their traces), cost per user, failed sign-ins.
+11. **Tests (W5), test-first:**
+    - password hashing and policy;
+    - same message for a wrong password and an unknown email;
+    - lockout and release, idle and absolute session expiry;
+    - revocation on logout and password change;
+    - daily limits, and no secrets in logs.
+
+    Plus a UI smoke test.
 
 **Acceptance criteria**
 - All Phase 4 sample answers render correctly in the UI, and sources open the correct page.
@@ -291,7 +320,8 @@
    - OpenTelemetry Collector with batching, and sampling that keeps every error and slow trace; content capture off.
    - Retention cleanup command (`obs cleanup`).
    - Alerts for daily cost over budget, an error-rate spike and many failed sign-ins.
-7. Final evaluation run and a short results report.
+7. **Continuous integration:** a GitHub Actions workflow runs the unit and integration tests (Postgres + pgvector service) on every push and pull request; `live` tests stay manual.
+8. Final evaluation run and a short results report.
 
 **Acceptance criteria:** a fresh setup following the README works end to end, and adding a 6th PDF works without re-processing the existing five, and a database restore from backup returns identical search results. When deployed, the app is reachable only over HTTPS, and stopping the trace viewer does not affect answers.
 

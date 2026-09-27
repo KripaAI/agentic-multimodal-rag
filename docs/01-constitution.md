@@ -1,6 +1,6 @@
 # Project Constitution — Agentic Multimodal RAG
 
-**Status:** Draft v0.5 · **Date:** 2026-09-26 · **Owner:** iamaigeek@gmail.com
+**Status:** Draft v0.6 · **Date:** 2026-09-26 · **Owner:** iamaigeek@gmail.com
 
 This document defines the non-negotiable principles of the project. The technical specification and implementation plan must comply with it. If a design decision conflicts with a principle here, the principle wins, or the constitution is amended explicitly.
 
@@ -82,6 +82,12 @@ Build an agentic Retrieval-Augmented Generation system over the project's PDF co
 - **W2 — Roadmap before build.** Each phase starts with a short plan. Work begins only after owner approval.
 - **W3 — Phase gates.** Each phase ends with a demo or evidence of its acceptance criteria and owner sign-off before the next phase begins.
 - **W4 — Transparency.** Failures, skipped steps, cost overruns and known limitations are reported plainly.
+- **W5 — Test-driven development, where it fits.** Code is proven by automated tests, not by manual checks.
+  - **Deterministic logic** (config, IDs, chunking, search scoring, `compute`, chart validation, the answer validator, citations, sign-in and sessions, limits, database writes) is built **test-first**: a failing test from the acceptance criteria, then code until it passes, then refactoring with all tests green.
+  - **Exploratory parts** (PDF figure and table detection) are tuned with the owner on the review sheet first. The approved results are then frozen as regression tests.
+  - **LLM answer quality** is judged by the RAGAS evaluation (P10), not by unit tests.
+
+  The full suite runs after every change. Phase summaries report test counts and results.
 
 ## 4. Out of scope (v1)
 
@@ -102,3 +108,4 @@ Changes to this document require the owner's explicit approval and are recorded 
 | 0.3 | 2026-09-26 | Added P11 (authenticated, accountable access) after the owner chose email + password login; out-of-scope list updated |
 | 0.4 | 2026-09-26 | Added P12 (observable by default, OpenTelemetry) at the owner's request |
 | 0.5 | 2026-09-26 | P10 names RAGAS as the evaluation framework, at the owner's request |
+| 0.6 | 2026-09-27 | Added W5 (test-driven development where it fits: TDD for deterministic logic, frozen regression tests for exploratory parsing, RAGAS for LLM quality), at the owner's request |

@@ -1,6 +1,6 @@
 # Technical Specification — Agentic Multimodal RAG
 
-**Status:** Draft v0.7 · **Date:** 2026-09-26 · **Governed by:** [01-constitution.md](01-constitution.md) · See the [changelog](#12-changelog) for what changed in each version
+**Status:** Draft v0.8 · **Date:** 2026-09-26 · **Governed by:** [01-constitution.md](01-constitution.md) · See the [changelog](#12-changelog) for what changed in each version
 
 ---
 
@@ -146,6 +146,7 @@ User ─► UI ─► [Agent: OpenAI LLM + tools] ◄─► Retrieval tools ─�
 | Trace viewer | **Dev:** Arize Phoenix (free to self-host; trace UI built for LLM agents) in `docker-compose.yml`. **Alternative:** Jaeger (fully open source, generic). **Prod:** OpenTelemetry Collector → chosen backend | Swappable by config (P6) | Proposed (D12) |
 | App logging | Python `logging` as JSON lines, each carrying `trace_id` / `span_id` | Logs link directly to traces | Proposed |
 | Evaluation | **RAGAS** (open source, Apache-2.0), pinned version, with an OpenAI judge model; plus custom metrics for charts, figures, citations and refusals | Standard RAG metrics (faithfulness, relevancy, context precision/recall), multimodal and agent/tool-use metrics; custom checks cover what RAGAS doesn't | **Decided** |
+| Testing | **pytest**, with markers `unit`, `integration` (a separate `mmrag_test` database in the Docker Postgres) and `live` (real OpenAI calls, run only on request); a mocked OpenAI client for unit tests; GitHub Actions CI (Phase 8) | Test-driven development where it fits (W5): fast, free and repeatable by default | **Decided** |
 
 **Important:** a ChatGPT subscription does not include API access. An OpenAI **API key with billing** is required.
 
@@ -594,3 +595,4 @@ The set is a versioned file (`eval/golden_set.jsonl`). RAGAS's test-set generato
 | 0.5 | 2026-09-26 | **Login added** (owner chose email + password). FR-17 to FR-20, NFR-11; Auth component (§3.2); authentication row in §4; `users`, `sessions`, `auth_events` and `query_log` in §5.5; new §7.6 (accounts, Argon2id, policy, lockout, sessions, limits, visibility, HTTPS, audit); `auth/` package in §8; four new risks; D10 and D11. |
 | 0.6 | 2026-09-26 | **Observability with OpenTelemetry.** FR-21, FR-22, NFR-12; Observability component (§3.2); stack rows for OpenTelemetry, trace viewer and JSON logging (§4); `query_log.trace_id` (§5.5); new §7.7 (trace per question and per ingestion, GenAI conventions, logs, metrics, content capture, export, retention, failure safety, admin view); `obs/` package and Phoenix in docker-compose (§8); three new risks; D12, D13. |
 | 0.7 | 2026-09-26 | **RAGAS evaluation.** Stack row (§4); golden-set entry fields and RAGAS test-set drafting (§9); metrics table rewritten with RAGAS (faithfulness, multimodal faithfulness, relevancy, context precision/recall, factual correctness, tool call accuracy) plus custom metrics; regression gate; judge reliability; two new risks; D14. |
+| 0.8 | 2026-09-27 | Testing row in §4 (pytest, markers, test database, mocked OpenAI, CI), following constitution W5. Decisions D1, D4, D6 and D14 recorded as decided. |

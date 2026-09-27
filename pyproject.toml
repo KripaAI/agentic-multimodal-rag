@@ -13,3 +13,13 @@ mmrag = "mmrag.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Default run: unit + integration. Live tests (real OpenAI calls) only on request: -m live
+addopts = "-m 'not live' -ra"
+markers = [
+    "unit: fast tests with no external services",
+    "integration: needs the Docker PostgreSQL (docker compose up -d)",
+    "live: calls the real OpenAI API (costs a fraction of a cent)",
+]

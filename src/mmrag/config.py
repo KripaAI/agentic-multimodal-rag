@@ -8,7 +8,7 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Mapping
 
 import yaml
 from dotenv import load_dotenv
@@ -146,26 +146,32 @@ class ConfigError(RuntimeError):
     pass
 
 
-@lru_cache(maxsize=1)
-def get_settings(config_file: Path | None = None) -> Settings:
-    load_dotenv(PROJECT_ROOT / ".env")
-    path = config_file or PROJECT_ROOT / "config.yaml"
+def load_settings(config_file: Path, environ: Mapping[str, str]) -> Settings:
+    """Build settings from a YAML file and an environment mapping (no global state)."""
     try:
-        raw = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        raw = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
     except FileNotFoundError as e:
-        raise ConfigError(f"Config file not found: {path}") from e
+        raise ConfigError(f"Config file not found: {config_file}") from e
 
     if "secrets" in raw:
         raise ConfigError("Secrets must not be in config.yaml; put them in .env")
-    database_url = os.environ.get("DATABASE_URL")
+    database_url = environ.get("DATABASE_URL")
     if not database_url:
         raise ConfigError("DATABASE_URL is not set (see .env.example)")
     raw["secrets"] = {
-        "openai_api_key": os.environ.get("OPENAI_API_KEY") or None,
+        "openai_api_key": environ.get("OPENAI_API_KEY") or None,
         "database_url": database_url,
     }
 
     try:
         return Settings.model_validate(raw)
     except ValidationError as e:
-        raise ConfigError(f"Invalid configuration in {path}:\n{e}") from e
+        raise ConfigError(f"Invalid configuration in {config_file}:\n{e}") from e
+
+
+@lru_cache(maxsize=1)
+def get_settings(config_file: Path | None = None) -> Settings:
+    """Process-wide settings: .env + config.yaml (or the file named by MMRAG_CONFIG)."""
+    load_dotenv(PROJECT_ROOT / ".env")
+    path = config_file or Path(os.environ.get("MMRAG_CONFIG") or PROJECT_ROOT / "config.yaml")
+    return load_settings(path, os.environ)

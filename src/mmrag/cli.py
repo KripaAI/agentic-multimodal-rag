@@ -85,10 +85,14 @@ def cmd_check(settings: Settings, args: argparse.Namespace) -> int:
                     span.set_status(trace.Status(trace.StatusCode.ERROR, str(e)))
                     print(f"{name:<9} FAIL {type(e).__name__}: {e}")
                     _log.error("check %s failed: %s", name, e)
-    endpoint = settings.observability.otlp_traces_endpoint
-    print(f"telemetry     trace {trace_id} -> {endpoint or 'no exporter configured'}")
-    if endpoint:
-        print("              open http://localhost:6006 to view it in Phoenix")
+    obs = settings.observability
+    if not obs.enabled:
+        print("telemetry     disabled (observability.enabled: false)")
+    else:
+        endpoint = obs.otlp_traces_endpoint
+        print(f"telemetry     trace {trace_id} -> {endpoint or 'no exporter configured'}")
+        if endpoint:
+            print("              open http://localhost:6006 to view it in Phoenix")
     return 1 if failed else 0
 
 

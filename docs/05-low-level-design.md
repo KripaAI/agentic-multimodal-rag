@@ -1,6 +1,6 @@
 # Low-Level Design — Agentic Multimodal RAG
 
-**Status:** Draft v0.5 · **Date:** 2026-09-26 · **Implements:** [02-technical-specification.md](02-technical-specification.md) v0.7 · **Governed by:** [01-constitution.md](01-constitution.md) · **Diagram:** [06-lld-diagram.pdf](06-lld-diagram.pdf)
+**Status:** Draft v0.6 · **Date:** 2026-09-27 · **Implements:** [02-technical-specification.md](02-technical-specification.md) v0.8 · **Governed by:** [01-constitution.md](01-constitution.md) · **Diagram:** [06-lld-diagram.pdf](06-lld-diagram.pdf)
 
 The high-level design (what the components are and how data flows) is in spec §3 and [04-flow-diagram.pdf](04-flow-diagram.pdf). This document is the **low-level design**: modules, functions and their contracts, database tables, algorithms, error handling and tests. It is what a developer implements from.
 
@@ -695,6 +695,25 @@ Traces, JSON logs and metrics use OpenTelemetry (§5.9). The records below are k
 
 ## 10. Testing
 
+**Strategy (constitution W5), a test pyramid:**
+
+| Part of the system | Approach |
+|---|---|
+| Deterministic logic: config, IDs, chunking, RRF, `compute`, chart validation, validator, citation hydration, bbox conversion, auth, sessions, limits, the transactional writer | **Test-driven development**: red → green → refactor |
+| Exploratory logic: figure and table detection, heading detection | Tune on the review sheet with the owner, then **freeze the approved results** as regression tests on fixture pages |
+| LLM behaviour: answer quality, retrieval quality | **RAGAS evaluation** (§5.10); unit tests use a mocked OpenAI client |
+| Throwaway experiments | Not tested; deleted afterwards |
+
+**Tooling:**
+- `pytest`, with tests in `tests/unit/`, `tests/integration/` and `tests/live/`.
+- Markers `unit`, `integration` and `live`. The default run is unit + integration; `live` runs only on request.
+- **Test database:** `mmrag_test` in the same Docker Postgres, created and migrated by a session fixture. Each test runs in a transaction that is rolled back.
+- **Fixtures:** `tests/fixtures/pages/`, with single pages cut from the PDFs and their expected results as JSON.
+- **Mocked OpenAI client:** returns scripted responses and tool calls, so agent-loop tests cost nothing and are repeatable.
+- **Coverage:** measured with `pytest-cov` and reported per phase; no fixed percentage target. The test-first rule matters more.
+- **CI:** GitHub Actions on every push and pull request (plan Phase 8).
+
+
 | Level | What | Examples |
 |---|---|---|
 | Unit | Pure functions | chunk boundaries; RRF scoring; `compute` whitelist rejects `__import__`; chart validation (pie → bar fallback, value mismatch rejected); bbox point→pixel conversion; ID formats |
@@ -748,3 +767,4 @@ Traces, JSON logs and metrics use OpenTelemetry (§5.9). The records below are k
 | 0.3 | 2026-09-26 | Email + password sign-in: `auth` modules and `app/login.py` (§1); `auth.*` config (§2); `user` CLI commands (§3.9); `users`, `sessions`, `auth_events` tables, `query_log.user_id` / `answer_json`, and indexes (§4); sign-in step in the request lifecycle (§5.1); new §5.8 authentication; error, logging, security, test and traceability updates. |
 | 0.4 | 2026-09-26 | OpenTelemetry observability: `obs/` modules (§1); `observability.*` and `retention.*` config (§2); `obs cleanup` command (§3.9); `query_log.trace_id` (§4); new §5.9 (setup, span tree, other traces, metrics, content capture, correlation, export, retention, failure safety); error, logging, security, test and traceability updates. |
 | 0.5 | 2026-09-26 | RAGAS evaluation: `eval/` modules (§1); `eval.*` config (§2); `eval` CLI commands (§3.9); `eval_runs` and `eval_results` tables (§4); new §5.10 (golden set, run steps, RAGAS samples and metrics, custom metrics, regression gate, report, judge reliability); regression test and traceability updates. |
+| 0.6 | 2026-09-27 | §10 testing strategy and tooling (TDD where it fits, frozen regression tests, mocked OpenAI, `mmrag_test` database, pytest markers, CI), following constitution W5. |
