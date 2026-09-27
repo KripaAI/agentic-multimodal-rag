@@ -10,6 +10,11 @@ __pycache__/
 build/
 dist/
 
+# Test artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
 # Generated data (rebuilt by the pipeline; see docs/05-low-level-design.md §3)
 data/elements/*
 data/tables/*

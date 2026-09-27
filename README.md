@@ -63,7 +63,7 @@ Development is test-driven where it fits (constitution W5, LLD §10). Install th
 | `config.yaml` | All tunable settings (no secrets) |
 | `src/mmrag/` | Application code |
 | `db/migrations/` | Versioned SQL schema files |
-| `tests/` | `unit/`, `integration/`, `live/` test suites; `fixtures/` for sample pages |
+| `tests/` | `unit/`, `integration/`, `live/` test suites; `fixtures/` for sample pages (Phase 1) |
 | `data/pdfs/` | Source PDFs (the knowledge base) |
 | `data/` (other folders) | Generated files: elements, figures, captions, caches, logs |
 | `gpu_job/` | Kaggle/Colab captioning notebook (Phase 2) |
