@@ -13,4 +13,8 @@ opentelemetry-sdk
 opentelemetry-exporter-otlp-proto-http
 opentelemetry-instrumentation-psycopg
 opentelemetry-instrumentation-openai-v2
+# openai-v2 2.4b0 imports `httpx` (openai 3.x itself uses httpx2) and
+# `opentelemetry.util.genai.instruments`, renamed in util-genai 1.2b0.
+httpx
+opentelemetry-util-genai<1.2
 kaggle
