@@ -17,6 +17,12 @@ OUT = Path(__file__).resolve().parent / "pages"
 PAGES = {
     "transformers_p003": ("Transformers-in-Practice-Illustrated.pdf", 3),
     "transformers_p005": ("Transformers-in-Practice-Illustrated.pdf", 5),
+    "transformers_p009": ("Transformers-in-Practice-Illustrated.pdf", 9),
+    "transformers_p011": ("Transformers-in-Practice-Illustrated.pdf", 11),
+    "transformers_p016": ("Transformers-in-Practice-Illustrated.pdf", 16),
+    "transformers_p023": ("Transformers-in-Practice-Illustrated.pdf", 23),
+    "transformers_p029": ("Transformers-in-Practice-Illustrated.pdf", 29),
+    "transformers_p031": ("Transformers-in-Practice-Illustrated.pdf", 31),
     "buildig_p029": ("Buildig-multimodal-rag.pdf", 29),
     "buildig_p074": ("Buildig-multimodal-rag.pdf", 74),
     "llm_notes_p007": ("LLM_Training_and_Model_Lifecycle_Notes (2).pdf", 7),

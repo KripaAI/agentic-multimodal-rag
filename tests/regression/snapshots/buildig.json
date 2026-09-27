@@ -1,0 +1,884 @@
+{
+ "doc_id": "3197d7d2ff1f3a6c",
+ "source_file": "Buildig-multimodal-rag.pdf",
+ "pages": 112,
+ "counts": {
+  "image:ok": 30,
+  "table:ok": 34,
+  "text:ok": 1761,
+  "vector_figure:ok": 1
+ },
+ "skips": {
+  "header_footer": 111
+ },
+ "items": [
+  {
+   "page": 4,
+   "type": "table",
+   "bbox": [
+    57.3,
+    211.0,
+    538.2,
+    402.5
+   ],
+   "columns": [
+    "Part",
+    "Scope",
+    "Core question"
+   ]
+  },
+  {
+   "page": 7,
+   "type": "image",
+   "bbox": [
+    57.8,
+    231.0,
+    539.2,
+    387.0
+   ],
+   "caption": "Figure 1. The unstructured data gap. Structured and semi-str"
+  },
+  {
+   "page": 8,
+   "type": "table",
+   "bbox": [
+    57.3,
+    84.3,
+    538.2,
+    212.7
+   ],
+   "columns": [
+    "Requirement",
+    "What users do",
+    "Required physical structure"
+   ]
+  },
+  {
+   "page": 9,
+   "type": "table",
+   "bbox": [
+    57.3,
+    502.8,
+    538.2,
+    631.2
+   ],
+   "columns": [
+    "Decision",
+    "Option A",
+    "Option B",
+    "Guidance"
+   ]
+  },
+  {
+   "page": 11,
+   "type": "image",
+   "bbox": [
+    57.8,
+    94.5,
+    539.2,
+    260.2
+   ],
+   "caption": "Figure 2. The classical analytics path. Structured and semi-"
+  },
+  {
+   "page": 14,
+   "type": "image",
+   "bbox": [
+    57.8,
+    94.5,
+    539.2,
+    270.0
+   ],
+   "caption": "Figure 3. Structured data from multimodal sources. The two o"
+  },
+  {
+   "page": 14,
+   "type": "table",
+   "bbox": [
+    57.3,
+    454.8,
+    538.6,
+    569.7
+   ],
+   "columns": [
+    "Modality",
+    "Signal",
+    "Perception model",
+    "Symbolic output"
+   ]
+  },
+  {
+   "page": 16,
+   "type": "image",
+   "bbox": [
+    57.8,
+    94.5,
+    539.2,
+    229.5
+   ],
+   "caption": "Figure 4. What each modality carries. Speech and paralinguis"
+  },
+  {
+   "page": 18,
+   "type": "table",
+   "bbox": [
+    57.4,
+    83.6,
+    538.1,
+    171.4
+   ],
+   "columns": [
+    "Modality",
+    "Unique information",
+    "Minimal extractor",
+    "What a transcript-only pipeline loses"
+   ]
+  },
+  {
+   "page": 19,
+   "type": "image",
+   "bbox": [
+    57.8,
+    249.0,
+    539.2,
+    365.2
+   ],
+   "caption": "Figure 5. Traditional perception techniques. Automatic speec"
+  },
+  {
+   "page": 20,
+   "type": "table",
+   "bbox": [
+    57.3,
+    57.3,
+    538.2,
+    185.7
+   ],
+   "columns": [
+    "Era",
+    "ASR",
+    "OCR"
+   ]
+  },
+  {
+   "page": 23,
+   "type": "image",
+   "bbox": [
+    57.8,
+    117.8,
+    539.2,
+    304.5
+   ],
+   "caption": "Figure 6. Traditional computer vision emits closed-set label"
+  },
+  {
+   "page": 25,
+   "type": "table",
+   "bbox": [
+    57.3,
+    236.5,
+    538.2,
+    416.7
+   ],
+   "columns": [
+    "Dimension",
+    "Detector / classifier",
+    "VLM"
+   ]
+  },
+  {
+   "page": 26,
+   "type": "image",
+   "bbox": [
+    57.8,
+    232.5,
+    539.2,
+    411.0
+   ],
+   "caption": "Figure 7. Embeddings place semantically related terms near e"
+  },
+  {
+   "page": 29,
+   "type": "image",
+   "bbox": [
+    57.8,
+    94.5,
+    539.2,
+    258.0
+   ],
+   "caption": "Figure 8. Semantic search as geometry. Embed documents and q"
+  },
+  {
+   "page": 29,
+   "type": "table",
+   "bbox": [
+    57.3,
+    513.3,
+    538.6,
+    601.2
+   ],
+   "columns": [
+    "cos θ",
+    "Geometry",
+    "Slide interpretation",
+    "Practical reality"
+   ]
+  },
+  {
+   "page": 30,
+   "type": "table",
+   "bbox": [
+    57.3,
+    175.8,
+    538.2,
+    367.9
+   ],
+   "columns": [
+    "Index",
+    "Idea",
+    "Query cost",
+    "Memory",
+    "Notes"
+   ]
+  },
+  {
+   "page": 33,
+   "type": "image",
+   "bbox": [
+    57.8,
+    189.8,
+    539.2,
+    370.5
+   ],
+   "caption": "Figure 9. Reference architecture. A staged meeting corpus fl"
+  },
+  {
+   "page": 33,
+   "type": "table",
+   "bbox": [
+    57.3,
+    630.3,
+    538.6,
+    734.7
+   ],
+   "columns": [
+    "Lane",
+    "Input",
+    "Model",
+    "Output",
+    "Key metadata preserved"
+   ]
+  },
+  {
+   "page": 34,
+   "type": "table",
+   "bbox": [
+    57.3,
+    202.8,
+    538.2,
+    372.4
+   ],
+   "columns": [
+    "Strategy",
+    "How it works",
+    "Pros",
+    "Cons"
+   ]
+  },
+  {
+   "page": 36,
+   "type": "image",
+   "bbox": [
+    72.0,
+    94.5,
+    524.2,
+    429.0
+   ],
+   "caption": "Figure 10. Video decomposes into an audio track plus a seque"
+  },
+  {
+   "page": 39,
+   "type": "image",
+   "bbox": [
+    57.8,
+    155.2,
+    539.2,
+    487.5
+   ],
+   "caption": "Figure 11. Automatic speech recognition converts raw audio, "
+  },
+  {
+   "page": 40,
+   "type": "table",
+   "bbox": [
+    57.3,
+    57.3,
+    538.2,
+    163.9
+   ],
+   "columns": [
+    "Family",
+    "Examples",
+    "Mechanism",
+    "Strengths"
+   ]
+  },
+  {
+   "page": 43,
+   "type": "image",
+   "bbox": [
+    57.8,
+    117.8,
+    539.2,
+    387.0
+   ],
+   "caption": "Figure 12. Anatomy of ASR. The audio signal becomes spectral"
+  },
+  {
+   "page": 45,
+   "type": "table",
+   "bbox": [
+    57.3,
+    541.8,
+    538.2,
+    678.5
+   ],
+   "columns": [
+    "Knob",
+    "Increase →",
+    "Decrease →"
+   ]
+  },
+  {
+   "page": 47,
+   "type": "image",
+   "bbox": [
+    105.8,
+    189.8,
+    489.8,
+    524.2
+   ],
+   "caption": "Figure 13. The reference dataset. A scenario-based product-d"
+  },
+  {
+   "page": 48,
+   "type": "table",
+   "bbox": [
+    57.3,
+    57.3,
+    538.2,
+    145.2
+   ],
+   "columns": [
+    "Asset class",
+    "Count",
+    "Granularity",
+    "Pipeline lane"
+   ]
+  },
+  {
+   "page": 51,
+   "type": "image",
+   "bbox": [
+    94.5,
+    189.8,
+    501.0,
+    524.2
+   ],
+   "caption": "Figure 14. Optical character recognition extracts text trapp"
+  },
+  {
+   "page": 54,
+   "type": "table",
+   "bbox": [
+    57.4,
+    83.6,
+    538.1,
+    291.4
+   ],
+   "columns": [
+    "Challenge",
+    "Symptom",
+    "Mitigation"
+   ]
+  },
+  {
+   "page": 55,
+   "type": "image",
+   "bbox": [
+    87.8,
+    155.2,
+    507.8,
+    489.8
+   ],
+   "caption": "Figure 15. Chunking. Embedding models have input limits (typ"
+  },
+  {
+   "page": 56,
+   "type": "vector_figure",
+   "bbox": [
+    17.2,
+    387.5,
+    501.9,
+    412.5
+   ]
+  },
+  {
+   "page": 58,
+   "type": "image",
+   "bbox": [
+    57.8,
+    94.5,
+    539.2,
+    378.8
+   ],
+   "caption": "Figure 16. Chunking trade-offs. Chunks that are too large ex"
+  },
+  {
+   "page": 60,
+   "type": "table",
+   "bbox": [
+    57.4,
+    83.6,
+    538.1,
+    220.1
+   ],
+   "columns": [
+    "Content type",
+    "Typical \"complete thought\"",
+    "Pitfall"
+   ]
+  },
+  {
+   "page": 61,
+   "type": "image",
+   "bbox": [
+    84.0,
+    94.5,
+    511.5,
+    429.0
+   ],
+   "caption": "Figure 17. Fixed-size chunking with overlap splits text ever"
+  },
+  {
+   "page": 62,
+   "type": "table",
+   "bbox": [
+    57.3,
+    219.3,
+    538.2,
+    481.9
+   ],
+   "columns": [
+    "Strategy",
+    "Boundary rule",
+    "Strengths",
+    "Weaknesses"
+   ]
+  },
+  {
+   "page": 65,
+   "type": "image",
+   "bbox": [
+    93.8,
+    189.8,
+    501.8,
+    524.2
+   ],
+   "caption": "Figure 18. Applying embeddings to audio and image data. Tran"
+  },
+  {
+   "page": 66,
+   "type": "table",
+   "bbox": [
+    57.3,
+    57.2,
+    538.2,
+    215.0
+   ],
+   "columns": [
+    "Field",
+    "Purpose"
+   ]
+  },
+  {
+   "page": 69,
+   "type": "image",
+   "bbox": [
+    57.8,
+    94.5,
+    539.2,
+    419.2
+   ],
+   "caption": "Figure 19. Stage checkpoint. ASR produced timestamped transc"
+  },
+  {
+   "page": 70,
+   "type": "table",
+   "bbox": [
+    57.3,
+    57.3,
+    538.2,
+    260.7
+   ],
+   "columns": [
+    "Recap item",
+    "Contract (invariant)",
+    "Why downstream cares"
+   ]
+  },
+  {
+   "page": 73,
+   "type": "image",
+   "bbox": [
+    57.8,
+    189.8,
+    539.2,
+    322.5
+   ],
+   "caption": "Figure 20. VLMs under the hood. An LLM breaks text into toke"
+  },
+  {
+   "page": 74,
+   "type": "table",
+   "bbox": [
+    57.3,
+    57.3,
+    538.2,
+    166.9
+   ],
+   "columns": [
+    "Architecture pattern",
+    "Input res.",
+    "p",
+    "merge",
+    "Tokens / image"
+   ]
+  },
+  {
+   "page": 74,
+   "type": "table",
+   "bbox": [
+    57.3,
+    395.6,
+    538.2,
+    560.0
+   ],
+   "columns": [
+    "Strategy",
+    "Rule",
+    "Good for",
+    "Risk"
+   ]
+  },
+  {
+   "page": 76,
+   "type": "image",
+   "bbox": [
+    57.8,
+    94.5,
+    539.2,
+    252.8
+   ],
+   "caption": "Figure 21. Typical approach for video analysis with a VLM. V"
+  },
+  {
+   "page": 78,
+   "type": "table",
+   "bbox": [
+    57.4,
+    83.6,
+    538.1,
+    247.1
+   ],
+   "columns": [
+    "Choice",
+    "Option A",
+    "Option B",
+    "Consideration"
+   ]
+  },
+  {
+   "page": 79,
+   "type": "image",
+   "bbox": [
+    57.8,
+    189.8,
+    539.2,
+    366.0
+   ],
+   "caption": "Figure 22. Prompt engineering for VLMs. Be explicit about th"
+  },
+  {
+   "page": 79,
+   "type": "table",
+   "bbox": [
+    57.3,
+    532.8,
+    538.5,
+    773.7
+   ],
+   "columns": [
+    "Rule",
+    "Failure it prevents",
+    "Mechanism"
+   ]
+  },
+  {
+   "page": 82,
+   "type": "image",
+   "bbox": [
+    57.8,
+    94.5,
+    539.2,
+    282.8
+   ],
+   "caption": "Figure 23. Structuring output. Design with future queries in"
+  },
+  {
+   "page": 82,
+   "type": "table",
+   "bbox": [
+    57.3,
+    484.0,
+    538.5,
+    649.2
+   ],
+   "columns": [
+    "Anticipated query",
+    "Required field(s)"
+   ]
+  },
+  {
+   "page": 85,
+   "type": "image",
+   "bbox": [
+    57.8,
+    189.8,
+    539.2,
+    363.0
+   ],
+   "caption": "Figure 24. Data quality with VLMs. Verify input quality befo"
+  },
+  {
+   "page": 85,
+   "type": "table",
+   "bbox": [
+    57.3,
+    580.0,
+    538.5,
+    733.2
+   ],
+   "columns": [
+    "Check",
+    "Metric",
+    "Typical rule"
+   ]
+  },
+  {
+   "page": 88,
+   "type": "image",
+   "bbox": [
+    57.8,
+    189.8,
+    539.2,
+    348.8
+   ],
+   "caption": "Figure 25. Deploying VLMs. VLMs are resource-intensive and n"
+  },
+  {
+   "page": 89,
+   "type": "table",
+   "bbox": [
+    57.3,
+    262.0,
+    538.2,
+    450.5
+   ],
+   "columns": [
+    "Spec element",
+    "Example",
+    "Why it belongs in the deployment"
+   ]
+  },
+  {
+   "page": 91,
+   "type": "table",
+   "bbox": [
+    57.3,
+    181.8,
+    538.2,
+    345.5
+   ],
+   "columns": [
+    "Lever",
+    "Gain",
+    "Cost / risk"
+   ]
+  },
+  {
+   "page": 92,
+   "type": "image",
+   "bbox": [
+    57.8,
+    94.5,
+    539.2,
+    276.0
+   ],
+   "caption": "Figure 26. Deploying VLMs, continued. The same container, wi"
+  },
+  {
+   "page": 94,
+   "type": "table",
+   "bbox": [
+    57.3,
+    247.0,
+    538.2,
+    376.2
+   ],
+   "columns": [
+    "Placement",
+    "Pros",
+    "Cons"
+   ]
+  },
+  {
+   "page": 95,
+   "type": "image",
+   "bbox": [
+    57.8,
+    155.2,
+    539.2,
+    371.2
+   ],
+   "caption": "Figure 27. Chunking videos for embedding. Segment embeddings"
+  },
+  {
+   "page": 96,
+   "type": "table",
+   "bbox": [
+    57.3,
+    57.3,
+    538.2,
+    145.2
+   ],
+   "columns": [
+    "Archive",
+    "fps",
+    "Vectors",
+    "Raw size @ 768-d float32"
+   ]
+  },
+  {
+   "page": 97,
+   "type": "table",
+   "bbox": [
+    57.3,
+    259.1,
+    538.2,
+    401.7
+   ],
+   "columns": [
+    "Granularity",
+    "Localization",
+    "Vectors / hour",
+    "Best query types",
+    "Main risk"
+   ]
+  },
+  {
+   "page": 98,
+   "type": "image",
+   "bbox": [
+    57.8,
+    94.5,
+    539.2,
+    202.5
+   ],
+   "caption": "Figure 28. Segment embedding. The VLM generates a text descr"
+  },
+  {
+   "page": 102,
+   "type": "image",
+   "bbox": [
+    76.5,
+    189.8,
+    519.0,
+    524.2
+   ],
+   "caption": "Figure 29. Querying video data. VLM-derived text enables a m"
+  },
+  {
+   "page": 103,
+   "type": "table",
+   "bbox": [
+    57.3,
+    84.3,
+    538.2,
+    250.2
+   ],
+   "columns": [
+    "Family",
+    "Example",
+    "Operator",
+    "Index"
+   ]
+  },
+  {
+   "page": 105,
+   "type": "table",
+   "bbox": [
+    57.3,
+    224.6,
+    538.2,
+    388.9
+   ],
+   "columns": [
+    "Approach",
+    "Strengths",
+    "Weaknesses",
+    "Use when"
+   ]
+  },
+  {
+   "page": 106,
+   "type": "image",
+   "bbox": [
+    65.2,
+    189.8,
+    530.2,
+    524.2
+   ],
+   "caption": "Figure 30. RAG overview. Retrieval finds relevant context, a"
+  },
+  {
+   "page": 108,
+   "type": "table",
+   "bbox": [
+    57.3,
+    479.5,
+    538.2,
+    634.2
+   ],
+   "columns": [
+    "Metric",
+    "Measures",
+    "How"
+   ]
+  },
+  {
+   "page": 112,
+   "type": "table",
+   "bbox": [
+    57.4,
+    108.2,
+    538.1,
+    737.8
+   ],
+   "columns": [
+    "Term",
+    "Definition"
+   ]
+  }
+ ]
+}

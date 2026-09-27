@@ -16,8 +16,9 @@ parse:
   callout_min_chars: 100            # ...when it holds at least this many characters
   min_figure_pt: 72                 # figures smaller than 1 inch each way are icons
   figure_margin_pt: 6               # padding around a rendered figure
-  label_attach_pt: 24               # small-font text this close to a drawing cluster is its label
-  caption_gap_pt: 30                # max gap between a figure and its caption line
+  label_attach_pt: 32               # small-font text / text cards this close to a figure belong to it
+  side_note_gap_pt: 72              # small-font notes level with a figure, up to 1 inch to its side
+  caption_gap_pt: 40                # max gap between a figure and its caption line
   heading_size_margin_pt: 1.5       # heading = font this much above body size...
   heading_max_chars: 120            # ...or bold and at most this long
   furniture_page_ratio: 0.5         # header/footer = same text + position on > this share of pages...

@@ -1,0 +1,588 @@
+{
+ "doc_id": "6a7f2af46c4bcc10",
+ "source_file": "Transformers-in-Practice-Illustrated.pdf",
+ "pages": 33,
+ "counts": {
+  "table:ok": 9,
+  "text:ok": 622,
+  "vector_figure:ok": 40
+ },
+ "skips": {},
+ "items": [
+  {
+   "page": 3,
+   "type": "vector_figure",
+   "bbox": [
+    44.8,
+    251.8,
+    488.8,
+    346.1
+   ],
+   "caption": "The model produces one token, appends it to its own input, a"
+  },
+  {
+   "page": 3,
+   "type": "vector_figure",
+   "bbox": [
+    53.4,
+    425.1,
+    541.3,
+    494.3
+   ],
+   "caption": "The whole of \"generation\" is these four steps in a circle."
+  },
+  {
+   "page": 4,
+   "type": "vector_figure",
+   "bbox": [
+    125.5,
+    52.2,
+    521.8,
+    187.1
+   ],
+   "caption": "System prompt, your message, files, retrieved documents, pas"
+  },
+  {
+   "page": 4,
+   "type": "vector_figure",
+   "bbox": [
+    118.3,
+    388.9,
+    479.3,
+    515.9
+   ],
+   "caption": "Every step produces a full distribution over the vocabulary."
+  },
+  {
+   "page": 5,
+   "type": "vector_figure",
+   "bbox": [
+    74.3,
+    141.0,
+    518.2,
+    254.7
+   ],
+   "caption": "Greedy takes the tallest bar every time. Sampling rolls a we"
+  },
+  {
+   "page": 5,
+   "type": "vector_figure",
+   "bbox": [
+    82.3,
+    397.5,
+    518.2,
+    506.2
+   ],
+   "caption": "Temperature doesn't change what the model knows. It changes "
+  },
+  {
+   "page": 6,
+   "type": "vector_figure",
+   "bbox": [
+    63.2,
+    48.0,
+    518.2,
+    184.1
+   ],
+   "caption": "Top-K keeps a fixed number of candidates. Top-P keeps a fixe"
+  },
+  {
+   "page": 6,
+   "type": "table",
+   "bbox": [
+    45.6,
+    331.8,
+    549.4,
+    579.5
+   ],
+   "columns": [
+    "Parameter",
+    "OpenAI",
+    "Anthropic",
+    "Google"
+   ]
+  },
+  {
+   "page": 7,
+   "type": "table",
+   "bbox": [
+    45.3,
+    79.8,
+    549.4,
+    238.2
+   ],
+   "columns": [
+    "Strategy",
+    "What it does",
+    "Use it when"
+   ]
+  },
+  {
+   "page": 7,
+   "type": "vector_figure",
+   "bbox": [
+    46.2,
+    502.1,
+    516.9,
+    661.4
+   ],
+   "caption": "Once the model commits to a token, it stays consistent with "
+  },
+  {
+   "page": 8,
+   "type": "vector_figure",
+   "bbox": [
+    53.4,
+    193.4,
+    541.3,
+    274.7
+   ],
+   "caption": "Hallucination snowballing: one wrong token forces a chain of"
+  },
+  {
+   "page": 8,
+   "type": "table",
+   "bbox": [
+    45.6,
+    349.8,
+    549.4,
+    539.0
+   ],
+   "columns": [
+    "Failure",
+    "What it looks like",
+    "Where it comes from"
+   ]
+  },
+  {
+   "page": 9,
+   "type": "vector_figure",
+   "bbox": [
+    46.2,
+    206.4,
+    507.2,
+    273.2
+   ],
+   "caption": "Prompting for structure gives you structure most of the time"
+  },
+  {
+   "page": 9,
+   "type": "vector_figure",
+   "bbox": [
+    46.2,
+    419.7,
+    511.0,
+    562.3
+   ],
+   "caption": "Constrained decoding turns your schema into a filter over th"
+  },
+  {
+   "page": 10,
+   "type": "vector_figure",
+   "bbox": [
+    47.7,
+    314.2,
+    545.6,
+    395.8
+   ],
+   "caption": "The three blind spots. Each one is a hallucination waiting t"
+  },
+  {
+   "page": 10,
+   "type": "vector_figure",
+   "bbox": [
+    44.8,
+    521.4,
+    550.0,
+    627.0
+   ],
+   "caption": "Retrieval-Augmented Generation, end to end. Steps 1 happens "
+  },
+  {
+   "page": 11,
+   "type": "vector_figure",
+   "bbox": [
+    50.5,
+    137.2,
+    542.8,
+    256.8
+   ],
+   "caption": "A chunk boundary in the wrong place doesn't produce a vague "
+  },
+  {
+   "page": 11,
+   "type": "vector_figure",
+   "bbox": [
+    50.4,
+    377.6,
+    518.8,
+    475.8
+   ],
+   "caption": "Put the most important retrieved chunk near the top or the b"
+  },
+  {
+   "page": 12,
+   "type": "vector_figure",
+   "bbox": [
+    47.7,
+    166.6,
+    545.6,
+    279.5
+   ],
+   "caption": "Chain of thought isn't a personality change. It's giving the"
+  },
+  {
+   "page": 12,
+   "type": "vector_figure",
+   "bbox": [
+    82.3,
+    546.0,
+    512.5,
+    681.3
+   ],
+   "caption": "Two ways to carry a conversation. Which one you get is mostl"
+  },
+  {
+   "page": 14,
+   "type": "table",
+   "bbox": [
+    45.3,
+    308.5,
+    549.4,
+    515.0
+   ],
+   "columns": [
+    "Part",
+    "Qwen3-14B",
+    "What it means"
+   ]
+  },
+  {
+   "page": 15,
+   "type": "vector_figure",
+   "bbox": [
+    50.5,
+    51.6,
+    541.3,
+    172.6
+   ],
+   "caption": "Token ID → one-hot → row lookup. Same token, same starting v"
+  },
+  {
+   "page": 15,
+   "type": "vector_figure",
+   "bbox": [
+    60.6,
+    469.9,
+    534.1,
+    653.8
+   ],
+   "caption": "Attention in one picture: each word takes a weighted sip fro"
+  },
+  {
+   "page": 16,
+   "type": "vector_figure",
+   "bbox": [
+    46.2,
+    391.0,
+    465.2,
+    509.9
+   ],
+   "caption": "Three projections of the same input. Q asks, K advertises, V"
+  },
+  {
+   "page": 17,
+   "type": "vector_figure",
+   "bbox": [
+    55.2,
+    179.2,
+    528.3,
+    320.4
+   ],
+   "caption": "Scores → mask → softmax. The masking is what makes this a de"
+  },
+  {
+   "page": 17,
+   "type": "vector_figure",
+   "bbox": [
+    60.7,
+    505.5,
+    515.9,
+    566.5
+   ],
+   "caption": "A × V. That's the entire output of an attention head."
+  },
+  {
+   "page": 18,
+   "type": "vector_figure",
+   "bbox": [
+    47.7,
+    299.4,
+    542.8,
+    429.9
+   ],
+   "caption": "Forty small attention operations running side by side, then "
+  },
+  {
+   "page": 19,
+   "type": "table",
+   "bbox": [
+    45.4,
+    51.4,
+    549.4,
+    154.9
+   ],
+   "columns": [
+    "",
+    "If it used 40 KV heads",
+    "Qwen3-14B, 8 KV heads"
+   ]
+  },
+  {
+   "page": 19,
+   "type": "vector_figure",
+   "bbox": [
+    60.6,
+    210.0,
+    537.0,
+    376.9
+   ],
+   "caption": "Multi-query attention (one shared KV head) was the aggressiv"
+  },
+  {
+   "page": 20,
+   "type": "vector_figure",
+   "bbox": [
+    108.2,
+    50.2,
+    486.5,
+    148.1
+   ],
+   "caption": "Without positional information, bidirectional attention is a"
+  },
+  {
+   "page": 20,
+   "type": "vector_figure",
+   "bbox": [
+    60.6,
+    306.0,
+    547.1,
+    397.1
+   ],
+   "caption": "Additive absolute position embeddings: cheap, effective, and"
+  },
+  {
+   "page": 21,
+   "type": "vector_figure",
+   "bbox": [
+    47.7,
+    60.0,
+    547.1,
+    161.0
+   ],
+   "caption": "RoPE moves position out of the input and into the attention "
+  },
+  {
+   "page": 22,
+   "type": "vector_figure",
+   "bbox": [
+    50.5,
+    113.5,
+    545.6,
+    262.8
+   ],
+   "caption": "The block: normalize, attend, add; normalize, think per toke"
+  },
+  {
+   "page": 22,
+   "type": "vector_figure",
+   "bbox": [
+    67.8,
+    578.8,
+    519.6,
+    720.8
+   ],
+   "caption": "Peeking at the prediction at three different depths."
+  },
+  {
+   "page": 23,
+   "type": "vector_figure",
+   "bbox": [
+    47.7,
+    355.3,
+    550.4,
+    483.5
+   ],
+   "caption": "The last vector becomes logits, logits become probabilities,"
+  },
+  {
+   "page": 24,
+   "type": "table",
+   "bbox": [
+    45.5,
+    51.3,
+    549.4,
+    258.5
+   ],
+   "columns": [
+    "Piece",
+    "Where the number comes from",
+    "Parameters"
+   ]
+  },
+  {
+   "page": 25,
+   "type": "vector_figure",
+   "bbox": [
+    50.5,
+    204.0,
+    544.2,
+    284.1
+   ],
+   "caption": "The autoregressive loop is lovely conceptually and brutal op"
+  },
+  {
+   "page": 25,
+   "type": "vector_figure",
+   "bbox": [
+    82.3,
+    501.9,
+    545.7,
+    609.1
+   ],
+   "caption": "If you remember one thing about serving LLMs: it's usually a"
+  },
+  {
+   "page": 26,
+   "type": "vector_figure",
+   "bbox": [
+    53.4,
+    256.4,
+    467.0,
+    378.8
+   ],
+   "caption": "Quantization is the cheapest big win available. Halve the bi"
+  },
+  {
+   "page": 27,
+   "type": "vector_figure",
+   "bbox": [
+    116.2,
+    141.0,
+    492.3,
+    246.1
+   ],
+   "caption": "Most of the time you never notice. On close calls, precision"
+  },
+  {
+   "page": 27,
+   "type": "table",
+   "bbox": [
+    45.2,
+    325.8,
+    549.5,
+    450.5
+   ],
+   "columns": [
+    "Safe to quantize",
+    "Keep in high precision"
+   ]
+  },
+  {
+   "page": 28,
+   "type": "vector_figure",
+   "bbox": [
+    57.7,
+    48.8,
+    510.0,
+    185.6
+   ],
+   "caption": "Store K and V, recompute nothing. Each new token costs one r"
+  },
+  {
+   "page": 28,
+   "type": "vector_figure",
+   "bbox": [
+    50.5,
+    261.1,
+    544.2,
+    353.8
+   ],
+   "caption": "Prefill is a compute problem. Decode is a memory problem. Th"
+  },
+  {
+   "page": 29,
+   "type": "vector_figure",
+   "bbox": [
+    60.6,
+    48.4,
+    534.1,
+    197.1
+   ],
+   "caption": "Same arithmetic, same result — far less traffic. Flash atten"
+  },
+  {
+   "page": 29,
+   "type": "vector_figure",
+   "bbox": [
+    50.5,
+    509.7,
+    545.6,
+    656.0
+   ],
+   "caption": "Three tokens accepted for the price of one big pass. Rejecti"
+  },
+  {
+   "page": 30,
+   "type": "table",
+   "bbox": [
+    45.5,
+    51.3,
+    549.5,
+    154.9
+   ],
+   "columns": [
+    "Target model",
+    "Draft model",
+    "Draft tokens",
+    "Speedup"
+   ]
+  },
+  {
+   "page": 30,
+   "type": "vector_figure",
+   "bbox": [
+    46.2,
+    428.3,
+    548.5,
+    553.1
+   ],
+   "caption": "Three ways to spread work across hardware. They combine. Not"
+  },
+  {
+   "page": 31,
+   "type": "vector_figure",
+   "bbox": [
+    89.5,
+    291.0,
+    526.9,
+    400.5
+   ],
+   "caption": "The benchmark measured one point. Production samples the who"
+  },
+  {
+   "page": 31,
+   "type": "table",
+   "bbox": [
+    45.6,
+    463.0,
+    549.5,
+    543.5
+   ],
+   "columns": [
+    "Benchmark prompt",
+    "Real user prompt"
+   ]
+  }
+ ]
+}
