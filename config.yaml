@@ -12,6 +12,10 @@ parse:
   line_aspect_ratio: 40
   cluster_merge_distance_pt: 12     # tuned in Phase 1
   min_cluster_shapes: 3             # tuned in Phase 1
+  figure_margin_pt: 6               # padding around a rendered figure
+  heading_size_margin_pt: 1.5       # heading = font this much above body size...
+  heading_max_chars: 120            # ...or bold and at most this long
+  furniture_page_ratio: 0.5         # header/footer = same text + position on > this share of pages
 
 caption:
   model_path: awq-7b                # awq-7b | nf4-7b | 3b (chosen in the Phase 2 pilot)

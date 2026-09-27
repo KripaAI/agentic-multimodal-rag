@@ -1,9 +1,13 @@
-"""Command-line entry points (LLD §3.9). Phase 0: `check`, `db migrate`, `models`."""
+"""Command-line entry points (LLD §3.9).
+
+Phase 0: `check`, `db migrate`, `models`. Phase 1: `profile`, `ingest parse`.
+"""
 
 from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 from typing import Callable
 
 from opentelemetry import trace
@@ -117,6 +121,23 @@ def cmd_models(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- profile / ingest
+
+def _pdf_paths(settings: Settings, names: list[str]) -> list[Path]:
+    """The named PDFs, or every PDF in `paths.pdf_dir` when none are named."""
+    raise NotImplementedError
+
+
+def cmd_profile(settings: Settings, args: argparse.Namespace) -> int:
+    """Profile PDFs; print a summary table and write `data/elements/corpus_profile.json`."""
+    raise NotImplementedError
+
+
+def cmd_ingest_parse(settings: Settings, args: argparse.Namespace) -> int:
+    """Parse one PDF, write its outputs and print their paths and counts."""
+    raise NotImplementedError
+
+
 # ---------------------------------------------------------------- main
 
 def main(argv: list[str] | None = None) -> int:
@@ -127,6 +148,12 @@ def main(argv: list[str] | None = None) -> int:
     db_parser = sub.add_parser("db", help="database commands")
     db_sub = db_parser.add_subparsers(dest="db_command", required=True)
     db_sub.add_parser("migrate", help="apply pending SQL migrations")
+    profile_parser = sub.add_parser("profile", help="report pages, images, tables and textless pages per PDF")
+    profile_parser.add_argument("pdfs", nargs="*", help="PDF files (default: all in paths.pdf_dir)")
+    ingest_parser = sub.add_parser("ingest", help="ingestion commands")
+    ingest_sub = ingest_parser.add_subparsers(dest="ingest_command", required=True)
+    parse_parser = ingest_sub.add_parser("parse", help="parse one PDF and build its review sheet")
+    parse_parser.add_argument("pdf", help="PDF file name in paths.pdf_dir, or a path")
     args = parser.parse_args(argv)
 
     try:
@@ -140,6 +167,8 @@ def main(argv: list[str] | None = None) -> int:
         "check": cmd_check,
         "models": cmd_models,
         "db": {"migrate": cmd_db_migrate}.get(getattr(args, "db_command", None)),
+        "profile": cmd_profile,
+        "ingest": {"parse": cmd_ingest_parse}.get(getattr(args, "ingest_command", None)),
     }
     try:
         return handlers[args.command](settings, args)
