@@ -1,0 +1,16 @@
+# Phase 0 dependencies. Later phases add theirs; exact versions are pinned in
+# requirements.lock (pip freeze) after each install.
+pyyaml
+python-dotenv
+pydantic>=2
+tzdata
+openai
+psycopg[binary]>=3.1
+pgvector
+pymupdf
+opentelemetry-api
+opentelemetry-sdk
+opentelemetry-exporter-otlp-proto-http
+opentelemetry-instrumentation-psycopg
+opentelemetry-instrumentation-openai-v2
+kaggle

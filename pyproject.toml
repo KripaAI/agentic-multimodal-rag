@@ -1,0 +1,15 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mmrag"
+version = "0.1.0"
+description = "Agentic multimodal RAG over PDFs"
+requires-python = ">=3.11,<3.13"
+
+[project.scripts]
+mmrag = "mmrag.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

@@ -1,0 +1,82 @@
+# All tunable settings (docs/05-low-level-design.md §2). Secrets live in .env only.
+
+paths:
+  pdf_dir: data/pdfs      # source PDFs (D6)
+  data_dir: "data"
+
+parse:
+  render_dpi: 200
+  min_image_px: 50
+  textless_chars: 50
+  furniture_width_ratio: 0.85
+  line_aspect_ratio: 40
+  cluster_merge_distance_pt: 12     # tuned in Phase 1
+  min_cluster_shapes: 3             # tuned in Phase 1
+
+caption:
+  model_path: awq-7b                # awq-7b | nf4-7b | 3b (chosen in the Phase 2 pilot)
+  max_pixels: 1003520               # 1280 * 28 * 28
+  prompt_version: v1
+
+enrich:
+  label_overlap_min: 0.5
+  proximity_window_pt: 150
+
+chunk:
+  min_tokens: 400
+  max_tokens: 800
+  overlap: 0.15
+
+embed:
+  model: text-embedding-3-large     # D1
+  dims: 1536                        # fixed in the DB schema; must be <= 2000
+  batch_size: 100
+
+search:
+  candidates: 30
+  rrf_k: 60
+  top_k: 8
+  hnsw_ef_search: 64
+  rerank: false
+
+agent:
+  model: gpt-4o-mini                # D4
+  effort: null
+  summary_model: gpt-4o-mini        # table summaries
+  rounds_default: 3
+  rounds_multi: 5
+
+ui:
+  page_dpi: 150
+
+auth:
+  min_password_length: 12
+  common_passwords_file: data/security/common-passwords.txt
+  max_failed_attempts: 5
+  lockout_minutes: 15
+  ip_max_failed_attempts: 20
+  session_idle_hours: 8
+  session_absolute_days: 7
+  daily_question_limit: 100
+  daily_cost_limit_usd: 2.00
+  limits_timezone: UTC               # set to your IANA zone, e.g. Europe/London
+  trust_proxy_headers: false
+
+observability:
+  enabled: true
+  environment: dev
+  otlp_traces_endpoint: http://localhost:6006/v1/traces   # Phoenix (D12)
+  otlp_metrics_endpoint: null        # Phoenix has no metrics store; set when a metrics backend exists
+  capture_content: true              # dev only; false in production (D13)
+  sample_ratio: 1.0
+  log_level: INFO
+  log_file: data/logs/app.jsonl
+
+retention:
+  query_log_days: 90
+  auth_events_days: 365
+
+eval:
+  golden_set: eval/golden_set.jsonl
+  judge_model: gpt-4.1               # D14: must differ from agent.model
+  regression_tolerance: 0.03

@@ -1,0 +1,29 @@
+# Secrets
+.env
+env
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+dist/
+
+# Generated data (rebuilt by the pipeline; see docs/05-low-level-design.md §3)
+data/elements/*
+data/tables/*
+data/assets/*
+data/captions/*
+data/cache/*
+data/logs/*
+!data/**/.gitkeep
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Source PDFs (large, third-party content); keep them out of git
+data/pdfs/

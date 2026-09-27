@@ -1,0 +1,4 @@
+# Normalize line endings in the repo; binaries untouched
+* text=auto
+*.pdf binary
+*.png binary
