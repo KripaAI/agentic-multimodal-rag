@@ -34,6 +34,10 @@ class Parse(_Section):
     line_aspect_ratio: float = Field(gt=1)
     cluster_merge_distance_pt: float = Field(gt=0)
     min_cluster_shapes: int = Field(ge=1)
+    figure_margin_pt: float = Field(ge=0)
+    heading_size_margin_pt: float = Field(ge=0)
+    heading_max_chars: int = Field(gt=0)
+    furniture_page_ratio: float = Field(gt=0, le=1)
 
 
 class Caption(_Section):
