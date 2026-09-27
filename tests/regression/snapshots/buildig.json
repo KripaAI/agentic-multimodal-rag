@@ -5,8 +5,7 @@
  "counts": {
   "image:ok": 30,
   "table:ok": 34,
-  "text:ok": 1761,
-  "vector_figure:ok": 1
+  "text:ok": 1762
  },
  "skips": {
   "header_footer": 111
@@ -412,16 +411,6 @@
     489.8
    ],
    "caption": "Figure 15. Chunking. Embedding models have input limits (typ"
-  },
-  {
-   "page": 56,
-   "type": "vector_figure",
-   "bbox": [
-    17.2,
-    387.5,
-    501.9,
-    412.5
-   ]
   },
   {
    "page": 58,

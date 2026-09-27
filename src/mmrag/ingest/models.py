@@ -72,7 +72,7 @@ class RejectedRegion(_Record):
     doc_id: str
     page: int
     bbox: BBox
-    filter: Literal["isolated_shape", "too_few_shapes", "text_callout", "too_small"]
+    filter: Literal["isolated_shape", "too_few_shapes", "text_callout", "too_small", "table_region"]
     shape_count: int
 
 

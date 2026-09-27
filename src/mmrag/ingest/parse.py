@@ -188,6 +188,7 @@ def parse_document(path: Path, settings: Settings) -> ParseResult:
                              + [e.bbox for e in images if e.status == "ok"])
                     figures = detect_vector_figures(page, blocks, masks, body_size, ctx)
                     page_tables = _drop_tables_inside_figures(page_tables, figures, ctx)
+                    figures = _drop_figures_on_tables(figures, page_tables, ctx)
                     exclude = [pymupdf.Rect(e.bbox) for e, _ in page_tables] + [pymupdf.Rect(f.bbox) for f in figures]
                     texts = extract_text_blocks(page, blocks, exclude, body_size, ctx)
 
@@ -491,6 +492,8 @@ def detect_tables(page: pymupdf.Page, blocks: list[TextBlock], ctx: ParseContext
         cells = [c for r in body for c in r]
         low_confidence = (not all(header) or len(set(header)) < len(header)
                           or sum(not c for c in cells) > 0.3 * len(cells))
+        if low_confidence and len(body) == 1:
+            continue  # a boxed formula or code line, not a table: its text stays as text
         bbox = pymupdf.Rect(tab.bbox)
         text = "\n".join(" | ".join(r) for r in [header, *body])
         e = ctx.element(n, "table", bbox, text, text=text)
@@ -521,6 +524,24 @@ def _drop_tables_inside_figures(
     return kept
 
 
+def _drop_figures_on_tables(
+    figures: list[Element], tables: list[tuple[Element, Table]], ctx: ParseContext
+) -> list[Element]:
+    """A "figure" mostly covering a kept table is the table's own frame or shading, drawn
+    just outside the table box where the mask does not reach."""
+    kept = []
+    for f in figures:
+        fig = pymupdf.Rect(f.bbox)
+        covered = max(((fig & pymupdf.Rect(e.bbox)).get_area() for e, _ in tables), default=0.0)
+        if covered >= 0.5 * fig.get_area():
+            ctx.asset(f.element_id)[0].unlink(missing_ok=True)
+            ctx.rejected.append(RejectedRegion(doc_id=ctx.doc_id, page=f.page, bbox=f.bbox,
+                                               filter="table_region", shape_count=0))
+            continue
+        kept.append(f)
+    return kept
+
+
 # ---------------------------------------------------------------- vector figures
 
 def detect_vector_figures(
@@ -543,8 +564,11 @@ def detect_vector_figures(
             parts.append((_union([d["rect"] for d in cluster]), reason, len(cluster)))
 
     regions = _merge_by_caption(_merge_regions(kept, cfg.cluster_merge_distance_pt), blocks, cfg)
-    figures = [(r, s) for r, s in regions if max(r.width, r.height) >= cfg.min_figure_pt]
-    parts += [(r, "too_small", s) for r, s in regions if max(r.width, r.height) < cfg.min_figure_pt]
+    def big_enough(r: pymupdf.Rect) -> bool:  # icons are small; highlight strips are thin
+        return max(r.width, r.height) >= cfg.min_figure_pt and min(r.width, r.height) >= cfg.min_figure_short_pt
+
+    figures = [(r, s) for r, s in regions if big_enough(r)]
+    parts += [(r, "too_small", s) for r, s in regions if not big_enough(r)]
     figures, leftover = _absorb_parts(figures, parts, blocks, body_size, cfg)
     for region, reason, shapes in leftover:
         ctx.rejected.append(RejectedRegion(doc_id=ctx.doc_id, page=n, bbox=_bbox(region), filter=reason,

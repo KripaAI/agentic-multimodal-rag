@@ -77,6 +77,15 @@ def test_figures_leave_page_text_alone(results, name):
             assert not pymupdf.Rect(fig.bbox).intersects(pymupdf.Rect(part)), (fig.bbox, part)
 
 
+@pytest.mark.parametrize("name", [n for n, e in EXPECTED.items() if "text_contains" in e])
+def test_text_is_kept(results, name):
+    """Content that is not a table or figure still reaches the text elements (P1)."""
+    _, res = results
+    text = " ".join(" ".join((e.text or "").split()) for e in res[name].elements if e.type == "text")
+    for snippet in EXPECTED[name]["text_contains"]:
+        assert snippet in text, snippet
+
+
 @pytest.mark.parametrize("name", [n for n, e in EXPECTED.items() if "table_columns" in e])
 def test_table_columns(results, name):
     _, res = results
