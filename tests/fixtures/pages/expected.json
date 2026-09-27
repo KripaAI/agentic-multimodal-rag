@@ -1,0 +1,45 @@
+{
+  "_comment": "Expected parse results per fixture page, written by hand from the rendered pages before the parser (plan Phase 1, task 10). counts = elements with status ok, by type. captions/headings/columns are prefixes or exact values in document order.",
+  "transformers_p003": {
+    "why": "two box-and-arrow diagrams with italic captions; section headings",
+    "counts": {"vector_figure": 2, "image": 0, "table": 0, "scanned_page": 0},
+    "figure_captions": ["The model produces one token", "The whole of \"generation\""],
+    "headings": ["Part 1: How the Model Behaves", "The Autoregressive Loop", "Step 1: Input Tokens and the Context Window"]
+  },
+  "transformers_p005": {
+    "why": "two rows of bar charts; each row is one figure (panels share a title line and a caption)",
+    "counts": {"vector_figure": 2, "image": 0, "table": 0, "scanned_page": 0},
+    "figure_captions": ["Greedy takes the tallest bar", "Temperature doesn't change"],
+    "headings": ["Random sampling", "Temperature", "Top-K", "Top-P (nucleus sampling)"]
+  },
+  "buildig_p029": {
+    "why": "raster figure with 'Figure 8.' caption, a table with only horizontal rules, callout and formula boxes (not figures)",
+    "counts": {"vector_figure": 0, "image": 1, "table": 1, "scanned_page": 0},
+    "figure_captions": ["Figure 8."],
+    "table_columns": [["cos θ", "Geometry", "Slide interpretation", "Practical reality"]]
+  },
+  "buildig_p074": {
+    "why": "two tables with shaded headers and no vertical rules; a code block (not a figure)",
+    "counts": {"vector_figure": 0, "image": 0, "table": 2, "scanned_page": 0},
+    "table_columns": [
+      ["Architecture pattern", "Input res.", "p", "merge", "Tokens / image"],
+      ["Strategy", "Rule", "Good for", "Risk"]
+    ]
+  },
+  "llm_notes_p007": {
+    "why": "slide screenshot image and a 2-column table",
+    "counts": {"vector_figure": 0, "image": 1, "table": 1, "scanned_page": 0},
+    "table_columns": [["Method", "Core training signal / idea"]]
+  },
+  "post_training_p022": {
+    "why": "dark code block (must not be a table or figure), two images with 'Figure 6.x:' captions",
+    "counts": {"vector_figure": 0, "image": 2, "table": 0, "scanned_page": 0},
+    "figure_captions": ["Figure 6.3:", "Figure 6.4:"]
+  },
+  "pre_training_p001": {
+    "why": "title page with image, shaded inline code line, 2-column table",
+    "counts": {"vector_figure": 0, "image": 1, "table": 1, "scanned_page": 0},
+    "table_columns": [["Input (context)", "Target / output"]],
+    "headings": ["Pre-Training"]
+  }
+}

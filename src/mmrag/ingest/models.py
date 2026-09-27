@@ -34,7 +34,8 @@ class Element(_Record):
     bbox: BBox
     type: ElementType
     section_path: list[str] = []
-    text: str | None = None
+    text: str | None = None  # text elements: the text; figures: the labels drawn inside them
+    caption: str | None = None  # figures and images: the nearby "Figure N…" or italic caption line
     asset_path: str | None = None  # relative to paths.data_dir
     content_hash: str
     status: Status = "ok"
@@ -59,7 +60,7 @@ class SkipRecord(_Record):
 
     doc_id: str
     page: int
-    kind: Literal["header_footer", "duplicate_image", "decorative_image", "empty_page"]
+    kind: Literal["header_footer", "duplicate_image", "undisplayed_image", "empty_page"]
     reason: str
     bbox: BBox | None = None
     text: str | None = None
@@ -71,7 +72,7 @@ class RejectedRegion(_Record):
     doc_id: str
     page: int
     bbox: BBox
-    filter: Literal["table_region", "page_furniture", "isolated_shape", "text_callout", "too_few_shapes"]
+    filter: Literal["isolated_shape", "too_few_shapes", "text_callout", "too_small"]
     shape_count: int
 
 

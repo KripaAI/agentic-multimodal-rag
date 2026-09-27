@@ -45,6 +45,26 @@ Requirements: Python 3.11, Docker Desktop.
 
    Then set `agent.model`, `agent.summary_model` and `eval.judge_model` in `config.yaml`.
 
+## Parsing (Phase 1)
+
+```
+.venv\Scripts\mmrag profile                                  # pages, images, tables, textless pages per PDF
+.venv\Scripts\mmrag ingest parse Buildig-multimodal-rag.pdf  # parse one PDF from data/pdfs/
+```
+
+`ingest parse` writes, per document (`{doc_id}` = first 16 hex of the PDF's SHA-256):
+
+| File | Contents |
+|---|---|
+| `data/elements/{doc_id}/elements.jsonl` | Every text block, image, vector figure, table and scanned page, with page, bbox and ID |
+| `data/elements/{doc_id}/skip_log.jsonl` | Everything dropped on purpose (headers/footers, repeated images), with the reason |
+| `data/elements/{doc_id}/rejected_regions.jsonl` | Drawing clusters the figure filters rejected |
+| `data/elements/{doc_id}/review_sheet.html` | Open in a browser to check detection page by page |
+| `data/tables/{doc_id}/tables.jsonl` | Tables as columns and rows |
+| `data/assets/{doc_id}/*.png` | Figure, image and scanned-page PNGs |
+
+Detection thresholds are in `config.yaml` under `parse:`.
+
 ## Tests
 
 Development is test-driven where it fits (constitution W5, LLD §10). Install the test tools with `pip install -r requirements-dev.txt`.

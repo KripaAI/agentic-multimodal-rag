@@ -12,10 +12,18 @@ parse:
   line_aspect_ratio: 40
   cluster_merge_distance_pt: 12     # tuned in Phase 1
   min_cluster_shapes: 3             # tuned in Phase 1
+  callout_text_coverage: 0.3        # a box this full of text (code, text card) is not a figure...
+  callout_min_chars: 100            # ...when it holds at least this many characters
+  min_figure_pt: 72                 # figures smaller than 1 inch each way are icons
   figure_margin_pt: 6               # padding around a rendered figure
+  label_attach_pt: 24               # small-font text this close to a drawing cluster is its label
+  caption_gap_pt: 30                # max gap between a figure and its caption line
   heading_size_margin_pt: 1.5       # heading = font this much above body size...
   heading_max_chars: 120            # ...or bold and at most this long
-  furniture_page_ratio: 0.5         # header/footer = same text + position on > this share of pages
+  furniture_page_ratio: 0.5         # header/footer = same text + position on > this share of pages...
+  furniture_margin_ratio: 0.1       # ...inside the top or bottom 10% of the page
+  table_strategy: lines_strict      # PyMuPDF table finder; lines_strict catches tables without vertical rules
+  vector_heavy_drawings: 20         # profiler: pages with at least this many drawings
 
 caption:
   model_path: awq-7b                # awq-7b | nf4-7b | 3b (chosen in the Phase 2 pilot)

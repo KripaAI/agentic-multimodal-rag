@@ -125,17 +125,75 @@ def cmd_models(settings: Settings, args: argparse.Namespace) -> int:
 
 def _pdf_paths(settings: Settings, names: list[str]) -> list[Path]:
     """The named PDFs, or every PDF in `paths.pdf_dir` when none are named."""
-    raise NotImplementedError
+    pdf_dir = settings.resolve(settings.paths.pdf_dir)
+    if not names:
+        return sorted(pdf_dir.glob("*.pdf"))
+    paths = []
+    for name in names:
+        path = Path(name) if Path(name).is_file() else pdf_dir / name
+        if not path.is_file():
+            raise FileNotFoundError(f"PDF not found: {name} (looked in {pdf_dir})")
+        paths.append(path)
+    return paths
 
 
 def cmd_profile(settings: Settings, args: argparse.Namespace) -> int:
     """Profile PDFs; print a summary table and write `data/elements/corpus_profile.json`."""
-    raise NotImplementedError
+    from mmrag.ingest.parse import profile_pdf
+
+    try:
+        paths = _pdf_paths(settings, args.pdfs)
+    except FileNotFoundError as e:
+        print(e)
+        return 1
+    if not paths:
+        print(f"No PDFs found in {settings.resolve(settings.paths.pdf_dir)}")
+        return 1
+    profiles = []
+    print(f"{'file':<50} {'pages':>5} {'images':>6} {'tables':>6} {'vector-heavy':>12} {'textless':>8}")
+    for path in paths:
+        p = profile_pdf(path, settings.parse)
+        profiles.append(p)
+        print(f"{path.name[:50]:<50} {len(p.pages):>5} {sum(x.images for x in p.pages):>6} "
+              f"{sum(x.tables for x in p.pages):>6} {sum(x.vector_heavy for x in p.pages):>12} "
+              f"{sum(x.textless for x in p.pages):>8}")
+    out = settings.resolve(settings.paths.data_dir) / "elements" / "corpus_profile.json"
+    out.parent.mkdir(parents=True, exist_ok=True)
+    out.write_text("[\n" + ",\n".join(p.model_dump_json() for p in profiles) + "\n]\n", encoding="utf-8")
+    print(f"\nProfile written to {out}")
+    return 0
 
 
 def cmd_ingest_parse(settings: Settings, args: argparse.Namespace) -> int:
     """Parse one PDF, write its outputs and print their paths and counts."""
-    raise NotImplementedError
+    from collections import Counter
+
+    from mmrag.ingest.parse import parse_document, write_outputs
+
+    try:
+        (path,) = _pdf_paths(settings, [args.pdf])
+    except FileNotFoundError as e:
+        print(e)
+        return 1
+    result = parse_document(path, settings)
+    files = write_outputs(result, path, settings)
+
+    print(f"{result.source_file}  (doc_id {result.doc_id}, {result.page_count} pages)\n")
+    status = Counter((e.type, e.status) for e in result.elements)
+    print(f"  {'element':<14} {'ok':>6} {'skipped':>8} {'review':>7}")
+    for etype in ("text", "image", "vector_figure", "table", "scanned_page"):
+        print(f"  {etype:<14} {status[(etype, 'ok')]:>6} {status[(etype, 'skipped')]:>8} "
+              f"{status[(etype, 'needs_review')]:>7}")
+    low = sum(t.low_confidence for t in result.tables)
+    print(f"\n  low-confidence tables: {low}")
+    for kind, count in sorted(Counter(s.kind for s in result.skips).items()):
+        print(f"  skipped {kind}: {count}")
+    for name, count in sorted(Counter(r.filter for r in result.rejected).items()):
+        print(f"  rejected {name}: {count}")
+    print()
+    for name, file in files.items():
+        print(f"  {name:<13} {file}")
+    return 0
 
 
 # ---------------------------------------------------------------- main

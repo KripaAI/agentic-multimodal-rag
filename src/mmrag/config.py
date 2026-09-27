@@ -34,10 +34,18 @@ class Parse(_Section):
     line_aspect_ratio: float = Field(gt=1)
     cluster_merge_distance_pt: float = Field(gt=0)
     min_cluster_shapes: int = Field(ge=1)
+    callout_text_coverage: float = Field(gt=0, le=1)
+    callout_min_chars: int = Field(ge=0)
+    min_figure_pt: float = Field(ge=0)
     figure_margin_pt: float = Field(ge=0)
+    label_attach_pt: float = Field(ge=0)
+    caption_gap_pt: float = Field(ge=0)
     heading_size_margin_pt: float = Field(ge=0)
     heading_max_chars: int = Field(gt=0)
     furniture_page_ratio: float = Field(gt=0, le=1)
+    furniture_margin_ratio: float = Field(gt=0, lt=0.5)
+    table_strategy: Literal["lines", "lines_strict", "text"]
+    vector_heavy_drawings: int = Field(gt=0)
 
 
 class Caption(_Section):

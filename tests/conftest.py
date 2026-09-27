@@ -12,7 +12,7 @@ import pytest
 import yaml
 from dotenv import load_dotenv
 
-from mmrag.config import PROJECT_ROOT
+from mmrag.config import PROJECT_ROOT, load_settings
 
 load_dotenv(PROJECT_ROOT / ".env")
 
@@ -35,6 +35,14 @@ def write_config(tmp_path):
         return path
 
     return _write
+
+
+@pytest.fixture
+def parse_settings(base_config, write_config, tmp_path):
+    """Project settings with outputs redirected to a temporary data dir and telemetry off."""
+    base_config["paths"]["data_dir"] = str(tmp_path / "data")
+    base_config["observability"].update(enabled=False, log_file=None)
+    return load_settings(write_config(base_config), UNIT_ENV)
 
 
 def _url_with_db(url: str, dbname: str) -> str:
