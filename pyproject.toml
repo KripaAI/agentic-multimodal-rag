@@ -22,4 +22,5 @@ markers = [
     "unit: fast tests with no external services",
     "integration: needs the Docker PostgreSQL (docker compose up -d)",
     "live: calls the real OpenAI API (costs a fraction of a cent)",
+    "regression: re-parses whole PDFs from data/pdfs and compares with approved snapshots (slow)",
 ]
