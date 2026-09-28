@@ -6,6 +6,7 @@ Phase 0: `check`, `db migrate`, `models`. Phase 1: `profile`, `ingest parse`.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import Callable
@@ -198,6 +199,109 @@ def cmd_ingest_parse(settings: Settings, args: argparse.Namespace) -> int:
 
 # ---------------------------------------------------------------- main
 
+# ---------------------------------------------------------------- caption (Phase 2)
+
+def _caption_dirs(settings: Settings, pdf: Path) -> tuple[str, Path]:
+    from mmrag.ingest.ids import doc_id
+
+    did = doc_id(pdf)
+    return did, settings.resolve(settings.paths.data_dir) / "captions" / did
+
+
+def _latest_run(caption_dir: Path, run: str | None) -> Path:
+    if run:
+        return Path(run)
+    runs = sorted((caption_dir / "runs").glob("*")) if (caption_dir / "runs").is_dir() else []
+    if not runs:
+        raise FileNotFoundError(f"no pulled runs in {caption_dir / 'runs'}; run `mmrag caption pull` first")
+    return runs[-1]
+
+
+def cmd_caption(settings: Settings, args: argparse.Namespace) -> int:
+    """Phase 2: bundle figures, run the VLM on Kaggle, compare models, import captions."""
+    import datetime
+
+    from mmrag.ingest import kaggle_job
+    from mmrag.ingest.bundle import build_jobs, write_bundle
+    from mmrag.ingest.caption_import import cache_path, import_captions
+    from mmrag.ingest.caption_report import MODEL_ORDER, build_pilot_report
+    from mmrag.ingest.captions import CaptionCache
+    from mmrag.ingest.models import Element, Table
+
+    try:
+        (pdf,) = _pdf_paths(settings, [args.pdf])
+    except FileNotFoundError as e:
+        print(e)
+        return 1
+    did, cdir = _caption_dirs(settings, pdf)
+    bundle = cdir / "bundle"
+
+    if args.caption_command == "bundle":
+        data = settings.resolve(settings.paths.data_dir)
+        el_file, tab_file = data / "elements" / did / "elements.jsonl", data / "tables" / did / "tables.jsonl"
+        if not el_file.is_file():
+            print(f"No parse output for {pdf.name}; run `mmrag ingest parse {pdf.name}` first")
+            return 1
+        elements = [Element.model_validate_json(x) for x in el_file.read_text(encoding="utf-8").splitlines() if x]
+        tables = [Table.model_validate_json(x) for x in tab_file.read_text(encoding="utf-8").splitlines() if x] \
+            if tab_file.is_file() else []
+        cache = None if args.pilot else CaptionCache(cache_path(settings))
+        jobs = build_jobs(elements, tables, settings, cache=cache)
+        if args.elements:
+            wanted = {f"{did}:{e.strip()}" for e in args.elements.split(",")}
+            jobs = [j for j in jobs if j.element_id in wanted]
+        if not jobs:
+            print("Nothing to caption: every figure is already cached for this model and prompt version.")
+            return 0
+        # vLLM's install may replace the GPU machine's torch, so the vLLM path runs last.
+        models = ["3b", "nf4-7b", "awq-7b"] if args.pilot else [settings.caption.model_path]
+        write_bundle(jobs, settings, bundle, models=models)
+        print(f"Bundle: {len(jobs)} job(s) for {', '.join(models)} -> {bundle}")
+        return 0
+
+    if args.caption_command == "push":
+        if not (bundle / "run.json").is_file():
+            print(f"No bundle in {bundle}; run `mmrag caption bundle {pdf.name}` first")
+            return 1
+        ref = kaggle_job.push(bundle, did, settings, cdir)
+        print(f"Started Kaggle job {ref}\nCheck progress with `mmrag caption status {pdf.name}` "
+              f"or at https://www.kaggle.com/code/{ref}")
+        return 0
+
+    if args.caption_command == "status":
+        print(kaggle_job.status(did, settings))
+        return 0
+
+    if args.caption_command == "pull":
+        run = cdir / "runs" / datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        kaggle_job.pull(did, settings, run)
+        print(f"Downloaded to {run}")
+        summary = run / "summary.json"
+        if summary.is_file():
+            for m, rep in json.loads(summary.read_text(encoding="utf-8")).items():
+                print(f"  {m:<7} " + ("FAILED" if rep.get("failed") else f"{rep['ok']}/{rep['jobs']} valid, "
+                                      f"{rep['seconds_per_figure']}s per figure"))
+        return 0
+
+    try:
+        run = _latest_run(cdir, args.run)
+    except FileNotFoundError as e:
+        print(e)
+        return 1
+    if args.caption_command == "report":
+        out = build_pilot_report(run, bundle, cdir / "pilot_report.html")
+        print(f"Comparison page: {out}")
+        return 0
+    if args.caption_command == "import":
+        model = args.model or settings.caption.model_path
+        result = import_captions(run / model / "captions.jsonl", did, settings)
+        print(f"Imported {result.ok} caption(s); {result.needs_review} need review -> {result.path}")
+        for e in result.errors:
+            print(f"  invalid record, not imported: {e}")
+        return 0
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mmrag")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -212,6 +316,22 @@ def main(argv: list[str] | None = None) -> int:
     ingest_sub = ingest_parser.add_subparsers(dest="ingest_command", required=True)
     parse_parser = ingest_sub.add_parser("parse", help="parse one PDF and build its review sheet")
     parse_parser.add_argument("pdf", help="PDF file name in paths.pdf_dir, or a path")
+    caption_parser = sub.add_parser("caption", help="VLM figure captioning on Kaggle (Phase 2)")
+    caption_sub = caption_parser.add_subparsers(dest="caption_command", required=True)
+    c_bundle = caption_sub.add_parser("bundle", help="package figures and context for the GPU job")
+    c_bundle.add_argument("--pilot", action="store_true", help="run all three model paths, ignoring the cache")
+    c_bundle.add_argument("--elements", help="only these elements, e.g. p3:vector_figure:2,p19:table:1")
+    caption_sub.add_parser("push", help="upload the bundle and start the Kaggle GPU job")
+    caption_sub.add_parser("status", help="show the Kaggle job's status")
+    caption_sub.add_parser("pull", help="download the Kaggle job's results")
+    c_report = caption_sub.add_parser("report", help="build the model comparison page from a pulled run")
+    c_import = caption_sub.add_parser("import", help="validate and store captions from a pulled run")
+    c_import.add_argument("--model", choices=["awq-7b", "nf4-7b", "3b"], help="default: caption.model_path")
+    for p in (c_bundle, caption_sub.choices["push"], caption_sub.choices["status"], caption_sub.choices["pull"],
+              c_report, c_import):
+        p.add_argument("pdf", help="PDF file name in paths.pdf_dir, or a path")
+    for p in (c_report, c_import):
+        p.add_argument("--run", help="a pulled run folder (default: the latest)")
     args = parser.parse_args(argv)
 
     try:
@@ -227,6 +347,7 @@ def main(argv: list[str] | None = None) -> int:
         "db": {"migrate": cmd_db_migrate}.get(getattr(args, "db_command", None)),
         "profile": cmd_profile,
         "ingest": {"parse": cmd_ingest_parse}.get(getattr(args, "ingest_command", None)),
+        "caption": cmd_caption,
     }
     try:
         return handlers[args.command](settings, args)

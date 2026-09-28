@@ -30,7 +30,8 @@ parse:
 caption:
   model_path: awq-7b                # awq-7b | nf4-7b | 3b (chosen in the Phase 2 pilot)
   max_pixels: 1003520               # 1280 * 28 * 28
-  prompt_version: v1
+  prompt_version: v1                # gpu_job/caption/prompts/caption_v1.md
+  kaggle_username: krishmithlesh0786  # owner of the private bundle dataset and GPU kernel
 
 enrich:
   label_overlap_min: 0.5

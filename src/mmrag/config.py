@@ -54,6 +54,7 @@ class Caption(_Section):
     model_path: Literal["awq-7b", "nf4-7b", "3b"]
     max_pixels: int = Field(gt=0)
     prompt_version: str
+    kaggle_username: str
 
 
 class Enrich(_Section):
