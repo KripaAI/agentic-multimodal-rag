@@ -29,6 +29,8 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 # ---------------------------------------------------------------- schema
 # Identical to mmrag/ingest/captions.py (a unit test compares the JSON schemas).
 
+MAX_VISIBLE_TEXT = 80  # labels in the densest pilot figure: about 40
+
 FigureType = Literal["diagram", "flowchart", "chart", "table_image", "screenshot", "photo", "equation", "decorative"]
 
 
@@ -71,7 +73,7 @@ class FigureCaption(_Model):
     figure_type: FigureType
     short_caption: str = Field(min_length=1)
     detailed_description: str = Field(min_length=1)
-    visible_text: list[str]
+    visible_text: list[str] = Field(max_length=MAX_VISIBLE_TEXT)  # a cap stops label-repeating loops
     extracted_data: ExtractedData | None = None
     keywords: list[str]
     confidence: Literal["high", "medium", "low"]
@@ -83,6 +85,9 @@ MODELS = {
     "3b": "Qwen/Qwen2.5-VL-3B-Instruct",
 }
 MAX_NEW_TOKENS = 2048
+# Pilot: greedy decoding looped on a grid of repeated labels. Mild, so table cells that
+# legitimately repeat ("0", "160 KB") are still transcribed.
+REPETITION_PENALTY = 1.05
 MIN_PIXELS = 256 * 28 * 28
 
 # ---------------------------------------------------------------- prompt and parsing
@@ -228,7 +233,8 @@ class TransformersBackend:
             text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             inputs = self.processor(text=[text], images=[image], return_tensors="pt").to(self.model.device)
             with self.torch.inference_mode():
-                output = self.model.generate(**inputs, max_new_tokens=MAX_NEW_TOKENS, do_sample=False)
+                output = self.model.generate(**inputs, max_new_tokens=MAX_NEW_TOKENS, do_sample=False,
+                                             repetition_penalty=REPETITION_PENALTY)
             new_tokens = output[0][inputs["input_ids"].shape[1]:]
             replies.append(self.processor.decode(new_tokens, skip_special_tokens=True))
         return replies
@@ -248,11 +254,11 @@ class VLLMBackend:
         schema = FigureCaption.model_json_schema()
         try:  # the structured-output API was renamed between vLLM releases
             from vllm.sampling_params import StructuredOutputsParams
-            self.params = SamplingParams(temperature=0, max_tokens=MAX_NEW_TOKENS,
+            self.params = SamplingParams(temperature=0, max_tokens=MAX_NEW_TOKENS, repetition_penalty=REPETITION_PENALTY,
                                          structured_outputs=StructuredOutputsParams(json=schema))
         except ImportError:
             from vllm.sampling_params import GuidedDecodingParams
-            self.params = SamplingParams(temperature=0, max_tokens=MAX_NEW_TOKENS,
+            self.params = SamplingParams(temperature=0, max_tokens=MAX_NEW_TOKENS, repetition_penalty=REPETITION_PENALTY,
                                          guided_decoding=GuidedDecodingParams(json=schema))
 
     def generate(self, items):

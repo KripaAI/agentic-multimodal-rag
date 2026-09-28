@@ -54,6 +54,22 @@ def test_schema_matches_the_project_copy():
     assert gpu.FigureCaption.model_json_schema() == FigureCaption.model_json_schema()
 
 
+def test_visible_text_is_capped():
+    """Pilot: the AWQ model looped on a grid ("The", "dog", "bit", ...) until cut off. With the
+    cap in the schema, vLLM's guided decoding must close the list instead."""
+    with pytest.raises(Exception):
+        gpu.FigureCaption.model_validate({**GOOD, "visible_text": ["x"] * (gpu.MAX_VISIBLE_TEXT + 1)})
+    assert gpu.FigureCaption.model_json_schema()["properties"]["visible_text"]["maxItems"] == gpu.MAX_VISIBLE_TEXT
+
+
+def test_prompt_v2_rules_for_chart_values():
+    """Pilot: all three models printed a value for a bar with no number on it, flagged exact."""
+    template = (PROJECT_ROOT / "gpu_job" / "caption" / "prompts" / "caption_v2.md").read_text(encoding="utf-8")
+    prompt = gpu.build_prompt(template, _job(4))
+    assert "no number printed" in prompt and "never" in prompt.lower()
+    assert "{schema}" not in prompt
+
+
 def test_prompt_is_filled_in():
     template = (PROJECT_ROOT / "gpu_job" / "caption" / "prompts" / "caption_v1.md").read_text(encoding="utf-8")
     prompt = gpu.build_prompt(template, _job(3, figure_refs=["See Figure 3."]))

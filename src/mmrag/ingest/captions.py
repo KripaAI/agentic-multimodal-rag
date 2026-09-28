@@ -13,6 +13,8 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+MAX_VISIBLE_TEXT = 80  # labels in the densest pilot figure: about 40
+
 FigureType = Literal["diagram", "flowchart", "chart", "table_image", "screenshot", "photo", "equation", "decorative"]
 
 
@@ -55,7 +57,7 @@ class FigureCaption(_Model):
     figure_type: FigureType
     short_caption: str = Field(min_length=1)
     detailed_description: str = Field(min_length=1)
-    visible_text: list[str]
+    visible_text: list[str] = Field(max_length=MAX_VISIBLE_TEXT)  # a cap stops label-repeating loops
     extracted_data: ExtractedData | None = None
     keywords: list[str]
     confidence: Literal["high", "medium", "low"]
