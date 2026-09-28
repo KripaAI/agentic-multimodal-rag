@@ -85,9 +85,9 @@ MODELS = {
     "3b": "Qwen/Qwen2.5-VL-3B-Instruct",
 }
 MAX_NEW_TOKENS = 2048
-# Pilot: greedy decoding looped on a grid of repeated labels. Mild, so table cells that
-# legitimately repeat ("0", "160 KB") are still transcribed.
-REPETITION_PENALTY = 1.05
+# Pilot v2: a repetition penalty (1.05) blanked table cells whose text the model had
+# already written in visible_text, so none is used; the visible_text cap stops loops.
+REPETITION_PENALTY = 1.0
 MIN_PIXELS = 256 * 28 * 28
 
 # ---------------------------------------------------------------- prompt and parsing

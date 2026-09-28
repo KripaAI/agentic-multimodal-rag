@@ -61,6 +61,60 @@ def test_import_validates_merges_and_caches(tmp_path, parse_settings):
     assert [(r["element_id"], r["status"]) for r in lines] == [("a", "ok"), ("b", "ok")]
 
 
+def _chart(points):
+    return {**CAPTION, "extracted_data": {"chart": {"chart_kind": "bar", "unit": "%", "series": [
+        {"name": "p", "points": [{"label": lab, "value": v, "flag": f} for lab, v, f in points]}]}}}
+
+
+def test_exact_flags_are_checked_against_the_printed_numbers():
+    """Pilot v2: the model marked a bar with no printed number 'exact' (P4). Only numbers
+    actually printed on the figure stay exact."""
+    from mmrag.ingest.caption_import import verify_chart_values
+
+    caption = _chart([("There", 41, "exact"), ("Yes", 1.4, "exact"), ("Sure", 0.4, "exact")])
+    fixed, note = verify_chart_values(caption, "Next token probabilities\n41%\n29%\n1.4%\nThere\nYes\nSure")
+    flags = [p["flag"] for p in fixed["extracted_data"]["chart"]["series"][0]["points"]]
+    assert flags == ["exact", "exact", "estimated"]
+    assert "Sure" in note
+
+
+def test_printed_values_are_flagged_exact():
+    """Pilot v2: after the stricter prompt the model marked printed values (29%, 1.4%) as
+    estimated. The flag follows the figure, in both directions."""
+    from mmrag.ingest.caption_import import verify_chart_values
+
+    caption = _chart([("There", 41, "exact"), ("The", 29, "estimated"), ("Sure", 0.4, "estimated")])
+    fixed, note = verify_chart_values(caption, "41%\n29%\n1.4%")
+    assert [p["flag"] for p in fixed["extracted_data"]["chart"]["series"][0]["points"]] == ["exact", "exact", "estimated"]
+    assert "The" in note
+
+
+def test_chart_values_on_a_figure_without_numbers_are_removed():
+    """Pilot v2: bars with no printed values and no scale got invented numbers (P4)."""
+    from mmrag.ingest.caption_import import verify_chart_values
+
+    caption = _chart([("sharp", 1.0, "exact"), ("flat", 0.4, "exact")])
+    fixed, note = verify_chart_values(caption, "Temperature 0.2\nsharp — nearly deterministic\nflat")
+    assert fixed["extracted_data"] is None
+    assert "no printed numbers" in note
+
+
+def test_import_uses_the_pdf_labels_of_vector_figures(tmp_path, parse_settings):
+    doc = "d" * 16
+    el_dir = parse_settings.resolve(parse_settings.paths.data_dir) / "elements" / doc
+    el_dir.mkdir(parents=True)
+    element = {"element_id": "a", "doc_id": doc, "source_file": "x.pdf", "page": 1, "bbox": [0, 0, 10, 10],
+               "type": "vector_figure", "section_path": [], "text": "Paris\n41%", "caption": None,
+               "asset_path": "p.png", "content_hash": "hash-a", "status": "ok", "skip_reason": None}
+    (el_dir / "elements.jsonl").write_text(json.dumps(element) + "\n", encoding="utf-8")
+    rec = _record("a", caption=_chart([("Paris", 41, "exact"), ("Rome", 12, "exact")]))
+    import_captions(_write(tmp_path / "captions.jsonl", [rec]), doc, parse_settings)
+    stored = json.loads((el_dir.parent.parent / "captions" / doc / "captions.jsonl").read_text(encoding="utf-8"))
+    points = stored["caption"]["extracted_data"]["chart"]["series"][0]["points"]
+    assert [p["flag"] for p in points] == ["exact", "estimated"]
+    assert "Rome" in stored["error"]  # the change is recorded, not silent
+
+
 def test_low_confidence_captions_need_review(tmp_path, parse_settings):
     """Spec §6.3: a caption the model itself rates low is not trusted as-is."""
     low = _record("a", caption={**CAPTION, "confidence": "low"})
