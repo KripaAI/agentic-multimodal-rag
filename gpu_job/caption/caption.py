@@ -22,7 +22,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -30,6 +30,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 # Identical to mmrag/ingest/captions.py (a unit test compares the JSON schemas).
 
 MAX_VISIBLE_TEXT = 80  # labels in the densest pilot figure: about 40
+MAX_LABEL_CHARS = 300  # one label; stops a loop inside a single string
 
 FigureType = Literal["diagram", "flowchart", "chart", "table_image", "screenshot", "photo", "equation", "decorative"]
 
@@ -73,7 +74,8 @@ class FigureCaption(_Model):
     figure_type: FigureType
     short_caption: str = Field(min_length=1)
     detailed_description: str = Field(min_length=1)
-    visible_text: list[str] = Field(max_length=MAX_VISIBLE_TEXT)  # a cap stops label-repeating loops
+    # Both caps stop label-repeating loops: guided decoding must close the string and the list.
+    visible_text: list[Annotated[str, Field(max_length=MAX_LABEL_CHARS)]] = Field(max_length=MAX_VISIBLE_TEXT)
     extracted_data: ExtractedData | None = None
     keywords: list[str]
     confidence: Literal["high", "medium", "low"]
@@ -85,9 +87,10 @@ MODELS = {
     "3b": "Qwen/Qwen2.5-VL-3B-Instruct",
 }
 MAX_NEW_TOKENS = 2048
-# Pilot v2: a repetition penalty (1.05) blanked table cells whose text the model had
-# already written in visible_text, so none is used; the visible_text cap stops loops.
-REPETITION_PENALTY = 1.0
+# Used only when retrying a failed figure. Pilot v2: applied to every figure, it blanked
+# table cells whose text was already in visible_text; pilot v3: without it, an identical
+# retry repeats an identical loop.
+RETRY_REPETITION_PENALTY = 1.05
 MIN_PIXELS = 256 * 28 * 28
 
 # ---------------------------------------------------------------- prompt and parsing
@@ -150,7 +153,7 @@ def run_jobs(jobs, backend, bundle: Path, out: Path, model_path: str, prompt_ver
         parsed = [parse_caption(r) for r in replies]
         retry = [k for k, (cap, _) in enumerate(parsed) if cap is None]
         if retry:
-            for k, raw in zip(retry, backend.generate([items[k] for k in retry])):
+            for k, raw in zip(retry, backend.generate([items[k] for k in retry], retry=True)):
                 replies[k] = raw
                 parsed[k] = parse_caption(raw)
         per_item = (time.monotonic() - t0) / len(batch)
@@ -223,7 +226,7 @@ class TransformersBackend:
         self.processor = AutoProcessor.from_pretrained(self.model_id, min_pixels=MIN_PIXELS, max_pixels=max_pixels)
         self.torch = torch
 
-    def generate(self, items):
+    def generate(self, items, retry: bool = False):
         from PIL import Image
 
         replies = []
@@ -234,7 +237,7 @@ class TransformersBackend:
             inputs = self.processor(text=[text], images=[image], return_tensors="pt").to(self.model.device)
             with self.torch.inference_mode():
                 output = self.model.generate(**inputs, max_new_tokens=MAX_NEW_TOKENS, do_sample=False,
-                                             repetition_penalty=REPETITION_PENALTY)
+                                             repetition_penalty=RETRY_REPETITION_PENALTY if retry else 1.0)
             new_tokens = output[0][inputs["input_ids"].shape[1]:]
             replies.append(self.processor.decode(new_tokens, skip_special_tokens=True))
         return replies
@@ -254,19 +257,21 @@ class VLLMBackend:
         schema = FigureCaption.model_json_schema()
         try:  # the structured-output API was renamed between vLLM releases
             from vllm.sampling_params import StructuredOutputsParams
-            self.params = SamplingParams(temperature=0, max_tokens=MAX_NEW_TOKENS, repetition_penalty=REPETITION_PENALTY,
-                                         structured_outputs=StructuredOutputsParams(json=schema))
+            guide = {"structured_outputs": StructuredOutputsParams(json=schema)}
         except ImportError:
             from vllm.sampling_params import GuidedDecodingParams
-            self.params = SamplingParams(temperature=0, max_tokens=MAX_NEW_TOKENS, repetition_penalty=REPETITION_PENALTY,
-                                         guided_decoding=GuidedDecodingParams(json=schema))
+            guide = {"guided_decoding": GuidedDecodingParams(json=schema)}
+        self.params = SamplingParams(temperature=0, max_tokens=MAX_NEW_TOKENS, **guide)
+        self.retry_params = SamplingParams(temperature=0, max_tokens=MAX_NEW_TOKENS,
+                                           repetition_penalty=RETRY_REPETITION_PENALTY, **guide)
 
-    def generate(self, items):
+    def generate(self, items, retry: bool = False):
         conversations = [[{"role": "user", "content": [
             {"type": "image_url", "image_url": {"url": _data_url(image_path)}},
             {"type": "text", "text": prompt},
         ]}] for _, prompt, image_path in items]
-        return [o.outputs[0].text for o in self.llm.chat(conversations, self.params, use_tqdm=False)]
+        params = self.retry_params if retry else self.params
+        return [o.outputs[0].text for o in self.llm.chat(conversations, params, use_tqdm=False)]
 
 
 def load_model(model_path: str, max_pixels: int):

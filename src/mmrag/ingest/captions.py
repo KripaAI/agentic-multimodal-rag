@@ -9,11 +9,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
 MAX_VISIBLE_TEXT = 80  # labels in the densest pilot figure: about 40
+MAX_LABEL_CHARS = 300  # one label; stops a loop inside a single string
 
 FigureType = Literal["diagram", "flowchart", "chart", "table_image", "screenshot", "photo", "equation", "decorative"]
 
@@ -57,7 +58,8 @@ class FigureCaption(_Model):
     figure_type: FigureType
     short_caption: str = Field(min_length=1)
     detailed_description: str = Field(min_length=1)
-    visible_text: list[str] = Field(max_length=MAX_VISIBLE_TEXT)  # a cap stops label-repeating loops
+    # Both caps stop label-repeating loops: guided decoding must close the string and the list.
+    visible_text: list[Annotated[str, Field(max_length=MAX_LABEL_CHARS)]] = Field(max_length=MAX_VISIBLE_TEXT)
     extracted_data: ExtractedData | None = None
     keywords: list[str]
     confidence: Literal["high", "medium", "low"]

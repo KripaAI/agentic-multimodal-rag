@@ -45,8 +45,8 @@ class FakeBackend:
         self.replies = replies
         self.calls = []
 
-    def generate(self, items):
-        self.calls.append([job["element_id"] for job, _, _ in items])
+    def generate(self, items, retry=False):
+        self.calls.append(([job["element_id"] for job, _, _ in items], retry))
         return [self.replies[job["element_id"]].pop(0) for job, _, _ in items]
 
 
@@ -110,12 +110,30 @@ def test_run_repairs_retries_then_flags(tmp_path):
     assert report["ok"] == 2 and report["needs_review"] == 1 and report["validity_rate"] == pytest.approx(2 / 3)
 
 
+def test_retry_runs_with_different_settings(tmp_path):
+    """Pilot v3: greedy decoding looped inside one label; an identical retry loops identically.
+    Only the failed figure is retried, and with the retry settings."""
+    backend = FakeBackend({"d:p1:vector_figure:1": [json.dumps(GOOD)],
+                           "d:p2:vector_figure:1": ["looping...", json.dumps(GOOD)]})
+    gpu.run_jobs([_job(1), _job(2)], backend, tmp_path, tmp_path / "out", "awq-7b", "v2", "{pdf_caption}")
+    assert backend.calls == [(["d:p1:vector_figure:1", "d:p2:vector_figure:1"], False),
+                             (["d:p2:vector_figure:1"], True)]
+
+
+def test_each_visible_label_is_capped():
+    """Pilot v3: the loop happened inside a single label string, which the item cap cannot stop."""
+    schema = gpu.FigureCaption.model_json_schema()
+    assert schema["properties"]["visible_text"]["items"]["maxLength"] == gpu.MAX_LABEL_CHARS
+    with pytest.raises(Exception):
+        gpu.FigureCaption.model_validate({**GOOD, "visible_text": ["q1k1 " * 100]})
+
+
 def test_run_resumes_after_interruption(tmp_path):
     jobs = [_job(1), _job(2)]
     first = FakeBackend({"d:p1:vector_figure:1": [json.dumps(GOOD)], "d:p2:vector_figure:1": [json.dumps(GOOD)]})
     gpu.run_jobs(jobs[:1], first, tmp_path, tmp_path / "out", "3b", "v1", "{pdf_caption}")
     second = FakeBackend({"d:p1:vector_figure:1": [], "d:p2:vector_figure:1": [json.dumps(GOOD)]})
     gpu.run_jobs(jobs, second, tmp_path, tmp_path / "out", "3b", "v1", "{pdf_caption}")
-    assert second.calls == [["d:p2:vector_figure:1"]]  # the done job is not captioned again
+    assert second.calls == [(["d:p2:vector_figure:1"], False)]  # the done job is not captioned again
     lines = (tmp_path / "out" / "captions.jsonl").read_text(encoding="utf-8").splitlines()
     assert len(lines) == 2
