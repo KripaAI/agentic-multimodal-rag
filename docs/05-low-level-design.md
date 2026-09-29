@@ -1,6 +1,6 @@
 # Low-Level Design — Agentic Multimodal RAG
 
-**Status:** Draft v0.6 · **Date:** 2026-09-27 · **Implements:** [02-technical-specification.md](02-technical-specification.md) v0.8 · **Governed by:** [01-constitution.md](01-constitution.md) · **Diagram:** [06-lld-diagram.pdf](06-lld-diagram.pdf)
+**Status:** Draft v0.7 · **Date:** 2026-09-29 · **Implements:** [02-technical-specification.md](02-technical-specification.md) v0.9 · **Governed by:** [01-constitution.md](01-constitution.md) · **Diagram:** [06-lld-diagram.pdf](06-lld-diagram.pdf)
 
 The high-level design (what the components are and how data flows) is in spec §3 and [04-flow-diagram.pdf](04-flow-diagram.pdf). This document is the **low-level design**: modules, functions and their contracts, database tables, algorithms, error handling and tests. It is what a developer implements from.
 
@@ -22,7 +22,8 @@ It contains no code. Function names and signatures are design contracts and may 
 | `mmrag/index/writer.py` | Transactional write of one document to PostgreSQL | db |
 | `mmrag/db/` | Connection pool, migrations runner, SQL queries | config |
 | `mmrag/retrieval/hybrid.py` | Hybrid search (pgvector + full-text + RRF), optional rerank | db, embed |
-| `mmrag/agent/loop.py` | Agent loop: plan, tool rounds, compose | llm client, tools |
+| `mmrag/agent/graph.py` | LangGraph `StateGraph`: state, nodes (plan, agent, tools, compose, validate, repair), edges, checkpointer | llm client, tools, validator |
+| `mmrag/memory/` | Long-term memory (Phase 9): extract semantic statements and episode summaries, store, recall | LangGraph store, llm client, embed |
 | `mmrag/agent/tools.py` | Tool schemas, dispatcher, tool implementations | retrieval, db, charts |
 | `mmrag/agent/validator.py` | Answer validation, citation hydration, repair | db |
 | `mmrag/charts/engine.py` | Chart validation and rendering | – |
@@ -99,6 +100,8 @@ All tunable values live in `config.yaml`. Secrets live only in `.env`.
 | `eval.judge_model` | set in Phase 6 (D14) | RAGAS judge |
 | `eval.metrics` | the list in spec §9 | evaluation |
 | `eval.regression_tolerance` | 0.03 (per RAGAS metric) | regression gate |
+| `memory.enabled` / `memory.retention_days` | true / 365 (Phase 9) | long-term memory (§5.11); users can switch it off |
+| `memory.recall_k` | 5 (Phase 9) | memories passed to the planner |
 
 **Secrets (`.env`):** `OPENAI_API_KEY`, `DATABASE_URL`.
 
@@ -391,14 +394,33 @@ Primary key: (`run_id`, `question_id`, `metric`).
 
 The whole request runs inside **one OpenTelemetry trace** (§5.9); each step below is a span.
 
-1. `app/ui.py` → `auth.require_user()` (§5.8) → `on_submit(q)` → `auth.check_limits(user)` → `agent.loop.run_query(q, user)`.
+1. `app/ui.py` → `auth.require_user()` (§5.8) → `on_submit(q)` → `auth.check_limits(user)` → `agent.graph.run_query(q, user, thread_id)`.
 2. **Plan:** the planner classifies `qtype` (conceptual · visual · quantitative · mixed · multi-part) and sets `round_limit` (3, or 5 for multi-part).
 3. **Tool rounds:** each LLM turn may emit several tool calls. The dispatcher runs them in parallel and returns every result in one message.
 4. **Compose:** the model returns the Answer JSON (spec §5.4), citing by `id` only (§3.1 Citation IDs).
 5. **Validate:** `validator.validate(answer, evidence)` hydrates the citations. On failure: one repair turn.
 6. **Log** to `query_log` with `user_id` and `answer_json`; return the Answer to the UI for rendering.
 
-### 5.2 `agent/loop.py`
+### 5.2 `agent/graph.py` (LangGraph, D3)
+
+**State** (a typed dict carried between nodes and checkpointed per `thread_id`): `messages` (the conversation, including tool calls and results), `question`, `qtype`, `round`, `round_limit`, `ledger` (evidence by id), `memories` (Phase 9), `answer`, `validation`, `repaired`.
+
+**Nodes and edges:**
+
+| Node | Does | Next |
+|---|---|---|
+| `recall_memory` | (Phase 9) the user's top memories by meaning, as user context | `plan` |
+| `plan` | classify `qtype`, set `round_limit` | `agent` |
+| `agent` | one OpenAI call with the tool schemas; may return several tool calls | `tools` if tool calls and `round < round_limit`, else `compose` |
+| `tools` | run the calls in parallel (thread pool, per-call timeout), add results to `messages` and `ledger` | `agent` |
+| `compose` | OpenAI structured output: the Answer JSON (spec §5.4); at the round limit, told to state what is missing | `validate` |
+| `validate` | §5.6; hydrates citations | END if ok, `repair` if failed and not yet repaired, else END with failing blocks dropped and a notice |
+| `repair` | one compose turn given the validator's failures | `validate` |
+| `remember` | (Phase 9) extract memories after a validated answer | END |
+
+**Rules:** nodes call the OpenAI SDK directly (no LangChain chat models, no prebuilt agents); tools are plain functions from `agent/tools.py`; each node is also an OpenTelemetry span (§5.9); the LangGraph version is pinned. The checkpointer is LangGraph's Postgres saver on the project database; `thread_id` is recorded in `query_log`.
+
+**Carried over from the loop design:**
 
 - **System prompt**, a versioned file, contains:
   - the grounding rules (P5);
@@ -409,9 +431,11 @@ The whole request runs inside **one OpenTelemetry trace** (§5.9); each step bel
 - **Evidence ledger:** every tool result is stored by ID (chunk, element, table, compute result). The validator checks answers against this ledger.
 - **Termination:** the loop stops when the model makes no tool call (then it composes), or when `rounds == round_limit`. At the limit, a final compose turn is forced with the instruction to state what is missing.
 - **Structured output:** the compose turn requires the Answer JSON schema. A response that doesn't parse gets one retry.
-- **Streaming:** the UI shows progress per tool call ("searching figures…").
+- **Streaming:** the graph streams node and tool events; the UI shows progress ("searching figures…").
 
 ### 5.3 `agent/tools.py`
+
+Tools are in-process Python functions; no MCP server (D16).
 
 | Tool | Parameters | Returns | Errors (returned to the model, never raised) |
 |---|---|---|---|
@@ -630,6 +654,19 @@ The file is validated on load.
 
 **Cost:** each run makes the agent's normal calls plus RAGAS judge calls. It's logged per run from the traces.
 
+### 5.11 Long-term memory (`mmrag/memory/`, Phase 9)
+
+| Function | Behaviour |
+|---|---|
+| `extract_semantic(user_id, turn)` | Low-cost model returns short statements about the user (preferences, focus, expertise), each with a subject key; a statement with an existing key replaces it. |
+| `summarize_episode(thread)` | At thread end or idle timeout: what was asked, found and left open, in a few sentences. |
+| `recall(user_id, question, k)` | Semantic search in the user's namespaces (`memories/{user_id}/semantic`, `…/episodic`); returns statements with ids and dates. |
+| `list / delete / set_enabled` | User controls (FR-25); `delete_user` removes the namespaces. |
+
+- **Storage:** LangGraph Store on PostgreSQL with pgvector, using `embed.model` (D15).
+- **Use:** recalled memories enter the plan and compose prompts in a section labelled as user context, with the instruction that they are not evidence (P13). The validator rejects citations that are not corpus `element_id`/`chunk_id`s.
+- **Retention:** `memory.retention_days` in config; `obs cleanup` also prunes expired memories.
+
 ---
 
 ## 6. Error handling
@@ -740,7 +777,7 @@ Traces, JSON logs and metrics use OpenTelemetry (§5.9). The records below are k
 | FR-6/7 captions and chart data | GPU job, `figure_captions.extracted_data` |
 | FR-8 figure linking | `enrich.link_figures`, `figure_links` |
 | FR-9 hybrid index | `chunk.py`, `embed.py`, `search_chunks` + indexes |
-| FR-10 agent | `agent/loop.py`, `agent/tools.py` |
+| FR-10 agent | `agent/graph.py`, `agent/tools.py` |
 | FR-11 block answers | Answer schema, `validator.py` |
 | FR-12 truthful charts | `charts/engine.py`, validator |
 | FR-13 original figures | validator (DB `asset_path`), `ui.render_blocks` |
@@ -756,6 +793,10 @@ Traces, JSON logs and metrics use OpenTelemetry (§5.9). The records below are k
 | NFR-11 credential security | `auth/passwords.py`, `auth/sessions.py`, §9 |
 | FR-21 end-to-end tracing | `obs/telemetry.py`, span tree (§5.9) |
 | FR-22 admin view | admin page in `app/`, `query_log`, metrics |
+| FR-23 multi-turn threads | LangGraph Postgres checkpointer, `thread_id` (§5.2) |
+| FR-24 long-term memory | `memory/` (§5.11), `recall_memory` / `remember` nodes |
+| FR-25 memory controls | `memory.list/delete/set_enabled`, CLI then UI |
+| NFR-13 memory privacy | per-user namespaces, telemetry content switch, retention (§5.11) |
 | NFR-12 telemetry safety | batch exporter, content capture switch, retention (§5.9) |
 
 ---
@@ -770,3 +811,4 @@ Traces, JSON logs and metrics use OpenTelemetry (§5.9). The records below are k
 | 0.4 | 2026-09-26 | OpenTelemetry observability: `obs/` modules (§1); `observability.*` and `retention.*` config (§2); `obs cleanup` command (§3.9); `query_log.trace_id` (§4); new §5.9 (setup, span tree, other traces, metrics, content capture, correlation, export, retention, failure safety); error, logging, security, test and traceability updates. |
 | 0.5 | 2026-09-26 | RAGAS evaluation: `eval/` modules (§1); `eval.*` config (§2); `eval` CLI commands (§3.9); `eval_runs` and `eval_results` tables (§4); new §5.10 (golden set, run steps, RAGAS samples and metrics, custom metrics, regression gate, report, judge reliability); regression test and traceability updates. |
 | 0.6 | 2026-09-27 | §10 testing strategy and tooling (TDD where it fits, frozen regression tests, mocked OpenAI, `mmrag_test` database, pytest markers, CI), following constitution W5. |
+| 0.7 | 2026-09-29 | Agent on LangGraph (D3): `agent/graph.py` replaces `agent/loop.py` (§1, §5.1, §5.2 state, nodes and edges, checkpointer). Long-term memory module and §5.11 (Phase 9). §3.5 and §4: `element_links` for figures and tables, similarity-checked rule 3. §5.4: related items. Tools stay in-process; no MCP (D16). Traceability for FR-23–25 and NFR-13. |

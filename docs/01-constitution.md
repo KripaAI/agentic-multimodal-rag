@@ -1,6 +1,6 @@
 # Project Constitution — Agentic Multimodal RAG
 
-**Status:** Draft v0.6 · **Date:** 2026-09-26 · **Owner:** iamaigeek@gmail.com
+**Status:** Draft v0.7 · **Date:** 2026-09-29 · **Owner:** iamaigeek@gmail.com
 
 This document defines the non-negotiable principles of the project. The technical specification and implementation plan must comply with it. If a design decision conflicts with a principle here, the principle wins, or the constitution is amended explicitly.
 
@@ -76,6 +76,11 @@ Build an agentic Retrieval-Augmented Generation system over the project's PDF co
 - Telemetry follows an open standard (OpenTelemetry), so the viewing tool can be changed without code changes.
 - Telemetry never breaks the application and never contains secrets or passwords. It records user content only where explicitly allowed, and is kept only as long as the retention policy says.
 
+### P13 — Memory personalises; documents inform
+- The assistant may remember things **about the user**: semantic memory (stable facts and preferences) and episodic memory (summaries of past conversations), to understand follow-ups and tailor answers.
+- Memory is **never evidence**. It is never cited, charted or presented as a fact about the documents; every factual claim still comes from the corpus with a citation (P2, P5). A memory that contradicts the documents is ignored.
+- Memory belongs to its user: it is private to that user, visible to them, deletable by them, and can be switched off. It is never shared between users and is kept only as long as the retention policy says.
+
 ## 3. Working agreements (human ↔ AI assistant)
 
 - **W1 — No code without permission.** The AI assistant does not write or run code until the owner explicitly approves the specific phase or task.
@@ -109,3 +114,4 @@ Changes to this document require the owner's explicit approval and are recorded 
 | 0.4 | 2026-09-26 | Added P12 (observable by default, OpenTelemetry) at the owner's request |
 | 0.5 | 2026-09-26 | P10 names RAGAS as the evaluation framework, at the owner's request |
 | 0.6 | 2026-09-27 | Added W5 (test-driven development where it fits: TDD for deterministic logic, frozen regression tests for exploratory parsing, RAGAS for LLM quality), at the owner's request |
+| 0.7 | 2026-09-29 | Added P13 (memory personalises; documents inform) for the long-term memory the owner requested; P9 applied to the agent framework: LangGraph adopted for orchestration because checkpointing and memory remove significant complexity |
