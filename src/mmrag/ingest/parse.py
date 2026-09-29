@@ -23,6 +23,7 @@ from pathlib import Path
 import pymupdf
 
 from mmrag.config import Parse, Settings
+from mmrag.fsutil import empty_dir
 from mmrag.ingest.ids import content_hash, doc_id, element_id
 from mmrag.ingest.models import (
     BBox,
@@ -159,9 +160,7 @@ def parse_document(path: Path, settings: Settings) -> ParseResult:
     cfg = settings.parse
     did = doc_id(path)
     asset_dir = settings.resolve(settings.paths.data_dir) / "assets" / did
-    asset_dir.mkdir(parents=True, exist_ok=True)
-    for old in asset_dir.iterdir():  # a re-run must not leave stale PNGs behind
-        old.unlink()  # empty the folder rather than delete it: OneDrive/indexers can hold the folder open
+    empty_dir(asset_dir)  # a re-run must not leave stale PNGs behind
     ctx = ParseContext(did, path.name, cfg, asset_dir)
     tracer = get_tracer("mmrag.ingest")
 

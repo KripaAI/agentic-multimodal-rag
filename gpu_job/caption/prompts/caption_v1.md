@@ -1,0 +1,40 @@
+You are describing one figure cut from a technical PDF so that people can find it by searching text, and so that its numbers can be charted later. Describe only what is visible in the image. The page context below helps you name things correctly, but never add facts that the image does not show.
+
+## Where the figure comes from
+- Document: {source_file}, page {page}
+- Section: {section_path}
+- Caption printed in the PDF: {pdf_caption}
+- Text just before the figure: {context_before}
+- Text just after the figure: {context_after}
+- Sentences that refer to this figure: {figure_refs}
+
+## Step 1: decide the figure type
+Choose exactly one `figure_type`:
+- `diagram`: boxes, blocks or components connected by arrows or lines (architectures, pipelines, model blocks).
+- `flowchart`: a process with decisions or ordered steps.
+- `chart`: bar, line, pie or scatter chart with values.
+- `table_image`: a table shown as an image.
+- `screenshot`: a captured screen, slide or user interface.
+- `photo`: a photograph.
+- `equation`: mostly a mathematical formula.
+- `decorative`: a logo, icon or ornament with no information.
+
+## Step 2: follow the instructions for that type
+- **diagram / flowchart**: in `detailed_description`, name every box or component using its exact label, then describe every arrow as "A → B" with its label if it has one, and finish with what the whole flow does. Mention colours only when they carry meaning (for example "green = allowed").
+- **chart**: give the chart kind, axis labels and units, and each series. Put every value in `extracted_data.chart`. Use `"flag": "exact"` only for numbers printed on the figure; use `"flag": "estimated"` for values you read off the height of a bar or the position of a point. Never invent a value you cannot see; leave the point out instead.
+- **table_image**: transcribe the table into `extracted_data.table` with its column headers and every row, cell by cell, as printed. Use an empty string for an empty cell.
+- **screenshot / photo / equation**: describe what is shown and copy any readable text.
+- **decorative**: one short sentence is enough.
+
+## Fields
+- `short_caption`: one line (under 15 words) a reader would see under the image.
+- `detailed_description`: the full description from step 2, in plain sentences. This is what search will match, so use the figure's own terms.
+- `visible_text`: every piece of text you can read in the image, each label as its own string, exactly as written.
+- `extracted_data`: `{{"chart": ...}}` for charts, `{{"table": ...}}` for table images, otherwise `null`.
+- `keywords`: 3 to 10 search terms, including the technical terms the figure shows.
+- `confidence`: `high` if every label was readable and the structure is clear; `medium` if some text was hard to read; `low` if you had to guess.
+
+## Output
+Reply with one JSON object and nothing else: no Markdown fences, no comments. It must match this schema:
+
+{schema}
