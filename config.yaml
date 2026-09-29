@@ -57,7 +57,7 @@ search:
   rerank: false
 
 agent:
-  model: gpt-4o-mini                # D4
+  model: gpt-5.4-mini               # D4: owner's choice after the Phase 4 sample run (gpt-4o-mini made no valid charts)
   effort: null
   summary_model: gpt-5.4-mini       # table summaries; owner's pick from the Phase 3 comparison
   rounds_default: 3
