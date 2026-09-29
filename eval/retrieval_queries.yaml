@@ -92,3 +92,82 @@
   collection: text
   query: vLLM
   expect: [p10:text:6, p30:text:10]
+  # Phase 5 (owner): other books discuss vLLM too; any of their vLLM passages counts.
+  also:
+    The_Complete_Guide_to_Post_Training_LLMs_v2_Expert_Edition.pdf: [p35:text:4, p46:text:12, p92:text:13, p96:text:6, p99:text:14, p99:text:15]
+    Buildig-multimodal-rag.pdf: [p4:text:16, p24:text:18, p84:text:1, p90:text:6, p90:text:7]
+
+# Phase 5 cross-document queries (DRAFT for the owner's approval). Written from the parsed
+# tables and figure captions before looking at any search result. Each topic is covered by
+# at least one other PDF; the query is worded so only `source` answers it, so passing means
+# search picked the right file, not just the right topic (competing file in `note`).
+- id: x1
+  kind: table
+  source: LLM_Training_and_Model_Lifecycle_Notes (2).pdf
+  collection: table
+  query: How do PPO and GRPO differ in how rollouts are generated and whether a value model is used?
+  expect: [p48:table:1, p56:table:1]
+  note: competes with Post-Training p48 (SFT vs PPO vs GRPO)
+- id: x2
+  kind: table
+  source: The_Complete_Guide_to_Post_Training_LLMs_v2_Expert_Edition.pdf
+  collection: table
+  query: Compare supervised fine-tuning, PPO-based RLHF and GRPO feature by feature
+  expect: [p48:table:1]
+  note: competes with Lifecycle Notes p48/p56 (PPO vs GRPO only)
+- id: x3
+  kind: table
+  source: The_Complete_Guide_to_Post_Training_LLMs_v2_Expert_Edition.pdf
+  collection: table
+  query: Deterministic verifiers versus preference reward models for outcome-based RL
+  expect: [p39:table:1, p40:table:1]
+  note: competes with Lifecycle Notes p44 (trained vs verifiable reward)
+- id: x4
+  kind: table
+  source: LLM_Training_and_Model_Lifecycle_Notes (2).pdf
+  collection: table
+  query: Which GPU memory components does LoRA reduce compared with full fine-tuning, and which does it not?
+  expect: [p52:table:2, p22:table:1, p24:table:1, p26:table:2]
+  note: competes with Transformers p25-27 (inference memory, precision)
+- id: x5
+  kind: visual
+  source: Buildig-multimodal-rag.pdf
+  collection: figure
+  query: Overview diagram of retrieval, augmentation and generation in RAG
+  expect: [p106:image:1]
+  note: competes with Transformers p10 (the RAG pipeline)
+- id: x6
+  kind: visual
+  source: Buildig-multimodal-rag.pdf
+  collection: figure
+  query: Chunk size trade-off between chunks that are too large, too small and just right
+  expect: [p58:image:1]
+  note: competes with Transformers p11 (chunk boundary in the wrong place)
+- id: x7
+  kind: visual
+  source: Buildig-multimodal-rag.pdf
+  collection: figure
+  query: How does a vision language model turn an image into tokens?
+  expect: [p73:image:1]
+  note: competes with Pre-Training p8 (tokenization) and Transformers p15 (token lookup)
+- id: x8
+  kind: visual
+  source: The_Complete_Guide_to_Pre_Training_LLMs_v2_Expert_Edition.pdf
+  collection: figure
+  query: Making a transformer model deeper by duplicating its blocks
+  expect: [p14:image:1, p13:image:1]
+  note: competes with Transformers p22 (one transformer block)
+- id: x9
+  kind: table
+  source: The_Complete_Guide_to_Pre_Training_LLMs_v2_Expert_Edition.pdf
+  collection: table
+  query: How does continued pre-training on Korean text differ from fine-tuning?
+  expect: [p5:table:1]
+  note: competes with Lifecycle Notes p4 (pre-training vs SFT)
+- id: x10
+  kind: table
+  source: LLM_Training_and_Model_Lifecycle_Notes (2).pdf
+  collection: table
+  query: When should you use prompting, RAG or continual pre-training to fix what a model does not know?
+  expect: [p13:table:1]
+  note: competes with Pre-Training p23 and the RAG book

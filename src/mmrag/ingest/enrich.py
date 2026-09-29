@@ -50,6 +50,19 @@ def _words(text: str) -> set[str]:
     return set(_WORD.findall(_fold(text)))
 
 
+# ---------------------------------------------------------------- owner-excluded figures
+
+def skip_figures(doc: LoadedDoc, files: list[str]) -> int:
+    """Mark every figure of a listed PDF as skipped (P1: kept with its reason), so it gets no
+    search document, no links and can never be cited. Returns how many were skipped."""
+    if doc.source_file not in files:
+        return 0
+    figures = {e.element_id for e in doc.figures()}
+    doc.elements = [e.model_copy(update={"status": "skipped", "skip_reason": "owner_excluded_figures"})
+                    if e.element_id in figures else e for e in doc.elements]
+    return len(figures)
+
+
 # ---------------------------------------------------------------- label cross-check
 
 def cross_check_labels(doc: LoadedDoc, cfg: Enrich) -> dict[str, float]:

@@ -14,7 +14,7 @@ from mmrag.index.document import Link, LoadedDoc, load_document
 from mmrag.index.embed import Embedder
 from mmrag.index.reports import write_link_report
 from mmrag.index.writer import write_document
-from mmrag.ingest.enrich import cross_check_labels, find_links, summarize_tables
+from mmrag.ingest.enrich import cross_check_labels, find_links, skip_figures, summarize_tables
 from mmrag.obs import get_tracer
 
 
@@ -49,6 +49,7 @@ def index_document(pdf: Path, settings: Settings, embedder: Embedder | None = No
         root.set_attribute("mmrag.source_file", doc.source_file)
 
         with tracer.start_as_current_span("ingest.enrich") as span:
+            span.set_attribute("mmrag.figures_skipped", skip_figures(doc, settings.enrich.skip_figures_for))
             shares = cross_check_labels(doc, settings.enrich)
             summaries = summarize_tables(list(doc.tables.values()), settings.agent.summary_model, chat,
                                          summary_cache(settings))

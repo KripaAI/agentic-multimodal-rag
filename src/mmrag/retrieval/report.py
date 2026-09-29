@@ -32,10 +32,17 @@ class Query(BaseModel):
     expect: list[str]  # element ids without the doc prefix, e.g. p3:vector_figure:2; any one counts
     kind: Literal["conceptual", "visual", "table", "exact_term"]
     note: str | None = None
+    also: dict[str, list[str]] = {}  # other PDF file -> element ids that also count (topic in several books)
 
 
 def load_queries(path: Path) -> list[Query]:
     return [Query.model_validate(q) for q in yaml.safe_load(path.read_text(encoding="utf-8"))]
+
+
+def expected_ids(q: Query, doc_ids: dict[str, str]) -> set[str]:
+    """Full element ids that satisfy the query: `expect` in `source`, plus any `also` files."""
+    wanted = {q.source: q.expect, **q.also}
+    return {f"{doc_ids[src]}:{e}" for src, ids in wanted.items() for e in ids}
 
 
 def found_rank(hits: list[Hit], expected: set[str]) -> int | None:
@@ -48,10 +55,10 @@ def found_rank(hits: list[Hit], expected: set[str]) -> int | None:
 def run_retrieval_report(settings: Settings, queries_file: Path) -> tuple[Path, int, int]:
     queries = load_queries(queries_file)
     pdf_dir = settings.resolve(settings.paths.pdf_dir)
-    doc_ids = {q.source: doc_id(pdf_dir / q.source) for q in queries}
+    doc_ids = {src: doc_id(pdf_dir / src) for q in queries for src in [q.source, *q.also]}
     sections, passed = [], 0
     for q in queries:
-        expected = {f"{doc_ids[q.source]}:{e}" for e in q.expect}
+        expected = expected_ids(q, doc_ids)
         results = {c: search(settings, q.query, c, TOP) for c in COLLECTIONS}
         rank = found_rank(results[q.collection], expected)
         passed += rank is not None

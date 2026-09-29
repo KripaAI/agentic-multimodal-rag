@@ -62,6 +62,7 @@ class Enrich(_Section):
     proximity_window_pt: float = Field(gt=0)
     link_min_score: float = Field(ge=0)
     label_weight: float = Field(ge=0)
+    skip_figures_for: list[str] = []  # PDF file names whose figures are never indexed or shown
 
 
 class Chunk(_Section):

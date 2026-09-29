@@ -23,6 +23,7 @@ data/captions/*
 data/cache/*
 data/logs/*
 data/answers/*
+data/study/*
 !data/**/.gitkeep
 
 # Editors / OS
