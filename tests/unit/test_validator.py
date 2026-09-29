@@ -132,3 +132,19 @@ def test_dropping_failing_blocks_keeps_the_rest_with_a_notice(ledger):
     r = _run(answer, ledger)
     kept, notices = drop_failing_blocks(answer, r.failed_blocks)
     assert len(kept.blocks) == 1 and notices and _run(kept, ledger).ok
+
+
+@pytest.mark.parametrize("md", ["Four steps (d:text:1).", "Four steps (id: d:text:1, d:p3:vector_figure:2).",
+                                "Four steps [d:text:1][d:p3:vector_figure:2].", "Four steps. [d:text:1]"])
+def test_ids_written_into_the_text_are_removed(md, ledger, charts):
+    # Citations are shown from the citation list; ids in prose are noise for the reader.
+    r = validate(_answer(_text("d:text:1", md=md)), ledger, charts, FakeStore())
+    assert r.ok and r.answer.blocks[0].content["markdown"].rstrip(".") in ("Four steps", "Four steps. ", "Four steps.")
+    assert "d:" not in r.answer.blocks[0].content["markdown"]
+
+
+def test_strip_inline_ids_keeps_ordinary_brackets_and_tidies_punctuation():
+    from mmrag.agent.validator import strip_inline_ids
+
+    assert strip_inline_ids("Fits (29.5 GB) alongside [a:b:1] , and more (see p. 3).") == \
+        "Fits (29.5 GB) alongside, and more (see p. 3)."

@@ -10,6 +10,7 @@ supplies locations.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Protocol
 
@@ -19,6 +20,15 @@ from mmrag.agent.answer import (
 )
 from mmrag.agent.ledger import EvidenceLedger
 from mmrag.charts.engine import ChartResult
+
+_ID = r"[\w-]+(?::[\w-]+)+"
+# "(d:text:1)", "(id: a, b)", "[a][b]": ids the model wrote into prose despite the prompt.
+_INLINE_IDS = re.compile(rf"\s*[(\[]\s*(?:ids?:\s*)?{_ID}(?:\s*[,;]\s*{_ID})*\s*[)\]]")
+
+
+def strip_inline_ids(markdown: str) -> str:
+    """Remove citation ids from the text; the page shows citations from the citation list."""
+    return re.sub(r" +([.,;:])", r"\1", _INLINE_IDS.sub("", markdown))
 
 FIGURE_TYPES = {"vector_figure", "image", "scanned_page"}
 
@@ -95,7 +105,7 @@ def validate(answer: Answer, ledger: EvidenceLedger, charts: dict[str, ChartResu
     blocks, sources, seen = [], [], set()
     for block in answer.blocks:
         if isinstance(block, TextBlock):
-            hb = HydratedBlock(type="text", content={"markdown": block.markdown},
+            hb = HydratedBlock(type="text", content={"markdown": strip_inline_ids(block.markdown)},
                                citations=[hydrate(c.id) for c in block.citations])
         elif isinstance(block, ImageBlock):
             e = info[block.element_id]

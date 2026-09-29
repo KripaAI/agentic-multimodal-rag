@@ -1,0 +1,58 @@
+# Phase 4 sample questions (plan Phase 4 gate; DRAFT for the owner's approval).
+# Run: mmrag ask-batch eval/agent_questions.yaml --models gpt-4o-mini,gpt-5.4-mini,<larger model>
+# `note` says what a good answer contains; the reviewer checks it on the answer page.
+questions:
+  # --- conceptual (text) ---
+  - id: c1
+    kind: conceptual
+    question: "How does a model generate text one token at a time?"
+    note: "Autoregressive loop: predict next token, append, repeat (p. 3). Figure of the loop is a plus."
+  - id: c2
+    kind: conceptual
+    question: "Why does retrieval-augmented generation help with a model's knowledge gaps?"
+    note: "The blind spots of a model's knowledge and the RAG pipeline (p. 10)."
+  - id: c3
+    kind: conceptual
+    question: "What are the four common failure modes of LLM output?"
+    note: "From the p. 8 table; all four named, cited to the table."
+
+  # --- visual (must show the original figure) ---
+  - id: v1
+    kind: visual
+    question: "Show me how temperature changes which token gets picked."
+    note: "Original figure 'Temperature's effect on token selection' (p. 5) plus explanation."
+  - id: v2
+    kind: visual
+    question: "What does the causal mask do to the attention scores? Show the diagram."
+    note: "Figure 'Attention scores, causal mask, and softmax per row' (p. 17)."
+  - id: v3
+    kind: visual
+    question: "Compare multi-head, grouped-query and multi-query attention with the figure."
+    note: "Original p. 19 figure; how K/V heads are shared."
+
+  # --- quantitative (chart + data table from printed numbers) ---
+  - id: n1
+    kind: quantitative
+    question: "Chart the KV cache memory per token with 40 KV heads versus Qwen3-14B's 8 KV heads."
+    note: "Bar chart 800 KB vs 160 KB from the p. 19 table; values exact, no 'approximate' label."
+  - id: n2
+    kind: quantitative
+    question: "How much memory does a 70B model need at different precision levels? Chart it."
+    note: "From the p. 26 figure; values estimated from a figure must show the 'approximate' label."
+  - id: n3
+    kind: quantitative
+    question: "What speedups does speculative decoding give for the target and draft model pairs listed?"
+    note: "From the p. 30 table (target, draft, draft tokens, speedup); chart or the original table."
+
+  # --- unanswerable (P5) ---
+  - id: u1
+    kind: unanswerable
+    question: "What was the training cost in US dollars of Qwen3-14B?"
+    note: "Not in the documents: an honest 'not found', no guessed number."
+
+  # --- follow-up in the same thread (FR-23) ---
+  - id: f1
+    kind: follow_up
+    follows: n1
+    question: "And what does that mean at the full context length?"
+    note: "Uses the n1 thread: 33.5 GB vs 6.7 GB at 40,960 tokens, vs the 29.5 GB weights (p. 19 table)."
