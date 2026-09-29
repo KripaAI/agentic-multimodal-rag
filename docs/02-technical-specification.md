@@ -287,11 +287,12 @@ Deleting a `documents` row removes all of its data through cascading foreign key
 ### 6.3 Enrichment and validation
 - **Schema check:** validate each caption against the schema. Invalid or low-confidence captions are marked `needs_review`.
 - **Label cross-check:** compare the VLM's `visible_text` against PDF text inside the figure's bounding box (for vector figures) and flag big mismatches.
-- **Figure links:** link each figure to the text that discusses it.
+- **Figure and table links:** link each figure **and each table** to the text that discusses it. The first rule that produces a link wins.
   1. **Explicit references:** "Figure 3", "Fig. 3", "Table 2".
-  2. **Deictic phrases:** "as illustrated below", "the diagram above", "shown here". These link to the nearest figure in the indicated direction.
-  3. **Spatial proximity fallback:** when neither applies, link to the immediately preceding text block on the same page, or failing that, the nearest text block within about ±150 points vertically. The window is configurable. Common in slide-style PDFs such as the LLM Lifecycle Notes.
+  2. **Deictic phrases:** "as illustrated below", "the diagram above", "shown here". These link to the nearest figure or table in the indicated direction.
+  3. **Most related nearby paragraph** (v0.9, at the owner's request): the candidates are the paragraphs directly before and after, and other paragraphs on the same page within about ±150 points vertically. Each is scored by meaning (embedding similarity to the figure's caption or the table's summary) plus the share of the figure's own labels it contains. The best candidate above a configurable threshold is linked; if none passes, the item is reported as unlinked. A figure placed next to an unrelated paragraph is therefore not linked to it.
   4. Every figure also inherits the `section_path` of where it appears.
+  5. Each link stores its rule and score.
 - **Table summaries:** generate a short (2-sentence) synthetic summary of each table, for example: "Comparison of fine-tuning loss across LoRA, full fine-tuning and DPO on GSM8K and MMLU." Use a low-cost OpenAI model at enrichment time, cached by table hash.
 
 ### 6.4 Chunking and indexing
@@ -349,6 +350,7 @@ Deleting a `documents` row removes all of its data through cascading foreign key
 2. **Keyword:** top 30 matching `websearch_to_tsquery` on `tsv_english` **or** `tsv_simple`, ranked by `ts_rank_cd`.
 3. **RRF fusion:** each chunk scores Σ 1 / (60 + rank) across the two lists. Chunks found by only one list still count.
 4. Return the top *k* (default 8). Each chunk's elements are **aggregated into one array** of `{element_id, page, bbox}` in reading order, so every chunk is **exactly one row**. A plain join would return one row per element, duplicating chunks and breaking the top-*k* count.
+6. **Related items** (v0.9, at the owner's request): each result carries the elements linked to it (§6.3). A text result lists its linked figures and tables; a figure or table result lists its linked paragraphs. Related elements come along even when their own search missed them.
 5. **Optional rerank** of the top ~20 with a local cross-encoder (Phase 6).
 
 The query embedding is computed once per query and cached for identical queries.

@@ -34,8 +34,10 @@ caption:
   kaggle_username: krishmithlesh0786  # owner of the private bundle dataset and GPU kernel
 
 enrich:
-  label_overlap_min: 0.5
-  proximity_window_pt: 150
+  label_overlap_min: 0.5            # share of the VLM's label words that must be in the PDF (tau)
+  proximity_window_pt: 150          # candidate paragraphs for a "related" link: this close vertically
+  link_min_score: 0.4               # related link needs cosine + label_weight * label share >= this
+  label_weight: 0.2                 # (tuned on the link report)
 
 chunk:
   min_tokens: 400
