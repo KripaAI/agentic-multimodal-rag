@@ -283,6 +283,12 @@ def cmd_caption(settings: Settings, args: argparse.Namespace) -> int:
                                       f"{rep['seconds_per_figure']}s per figure"))
         return 0
 
+    if args.caption_command == "review":
+        from mmrag.ingest.caption_report import build_caption_review
+
+        print(f"Caption review page: {build_caption_review(did, settings)}")
+        return 0
+
     try:
         run = _latest_run(cdir, args.run)
     except FileNotFoundError as e:
@@ -327,8 +333,9 @@ def main(argv: list[str] | None = None) -> int:
     c_report = caption_sub.add_parser("report", help="build the model comparison page from a pulled run")
     c_import = caption_sub.add_parser("import", help="validate and store captions from a pulled run")
     c_import.add_argument("--model", choices=["awq-7b", "nf4-7b", "3b"], help="default: caption.model_path")
+    caption_sub.add_parser("review", help="page of all imported captions for the owner's spot-check")
     for p in (c_bundle, caption_sub.choices["push"], caption_sub.choices["status"], caption_sub.choices["pull"],
-              c_report, c_import):
+              c_report, c_import, caption_sub.choices["review"]):
         p.add_argument("pdf", help="PDF file name in paths.pdf_dir, or a path")
     for p in (c_report, c_import):
         p.add_argument("--run", help="a pulled run folder (default: the latest)")

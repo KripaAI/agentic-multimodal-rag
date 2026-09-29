@@ -19,18 +19,24 @@ from mmrag.ingest.captions import CaptionCache, CaptionRecord, load_records
 _NUMBER = r"-?\d[\d,]*(?:\.\d+)?"
 # A printed data value: a line that is only a number (optionally with % or a unit), or a
 # number directly followed by % or a unit. Numbers inside titles ("Temperature 1.0") are not.
-_VALUE_LINE = re.compile(rf"^[~≈<>]?\s*({_NUMBER})\s*(?:%|[A-Za-z×]{{1,3}})?$")
-_VALUE_WITH_UNIT = re.compile(rf"({_NUMBER})\s*(?:%|GB|MB|KB|TB|ms|×|x)(?![A-Za-z])")
+_VALUE_LINE = re.compile(rf"^[~≈<>]?\s*({_NUMBER})\s*(%|[A-Za-z×]{{1,3}})?$")
+_VALUE_WITH_UNIT = re.compile(rf"({_NUMBER})\s*(%|GB|MB|KB|TB|ms|×|x)(?![A-Za-z])")
 
 
 def printed_values(texts: list[str]) -> set[float]:
+    """Numbers printed as data values. A percentage also counts as its fraction (41% = 0.41),
+    since models write it either way."""
     values = set()
     for text in texts:
         for line in text.splitlines():
             line = line.strip()
             m = _VALUE_LINE.match(line)
-            found = [m.group(1)] if m else _VALUE_WITH_UNIT.findall(line)
-            values.update(float(v.replace(",", "")) for v in found)
+            found = [m.groups()] if m else _VALUE_WITH_UNIT.findall(line)
+            for number, unit in found:
+                v = float(number.replace(",", ""))
+                values.add(v)
+                if unit == "%":
+                    values.add(round(v / 100, 10))
     return values
 
 
@@ -50,7 +56,7 @@ def verify_chart_values(caption: dict, figure_text: str | list[str]) -> tuple[di
     downgraded, upgraded = [], []
     for series in chart["series"]:
         for p in series["points"]:
-            is_printed = any(abs(p["value"] - v) < 1e-9 for v in printed)
+            is_printed = any(abs(p["value"] - v) < 1e-6 for v in printed)
             if p["flag"] == "exact" and not is_printed:
                 p["flag"] = "estimated"
                 downgraded.append(p["label"])

@@ -89,6 +89,15 @@ def test_printed_values_are_flagged_exact():
     assert "The" in note
 
 
+def test_printed_percentages_match_their_fractions():
+    """Full run: the model wrote the printed "41%" as 0.41. Both forms are the printed value."""
+    from mmrag.ingest.caption_import import verify_chart_values
+
+    caption = _chart([("41%", 0.41, "estimated"), ("29%", 29, "estimated"), ("x", 0.5, "exact")])
+    fixed, _ = verify_chart_values(caption, "41%\n29%")
+    assert [p["flag"] for p in fixed["extracted_data"]["chart"]["series"][0]["points"]] == ["exact", "exact", "estimated"]
+
+
 def test_chart_values_on_a_figure_without_numbers_are_removed():
     """Pilot v2: bars with no printed values and no scale got invented numbers (P4)."""
     from mmrag.ingest.caption_import import verify_chart_values
@@ -113,6 +122,34 @@ def test_import_uses_the_pdf_labels_of_vector_figures(tmp_path, parse_settings):
     points = stored["caption"]["extracted_data"]["chart"]["series"][0]["points"]
     assert [p["flag"] for p in points] == ["exact", "estimated"]
     assert "Rome" in stored["error"]  # the change is recorded, not silent
+
+
+def test_reimport_updates_the_cache(tmp_path, parse_settings):
+    """Re-importing after a rule fix must not leave the old record in the cache."""
+    doc = "d" * 16
+    first = _record("a", caption=_chart([("x", 7, "exact")]))
+    import_captions(_write(tmp_path / "1" / "captions.jsonl", [first]), doc, parse_settings)
+    second = _record("a", caption=_chart([("x", 8, "exact")]))
+    import_captions(_write(tmp_path / "2" / "captions.jsonl", [second]), doc, parse_settings)
+    cache = CaptionCache(parse_settings.resolve(parse_settings.paths.data_dir) / "captions" / "cache.jsonl")
+    assert cache.get("hash-a", "awq-7b", "v1").caption.extracted_data.chart.series[0].points[0].value == 8
+
+
+def test_caption_review_page(tmp_path, parse_settings):
+    from mmrag.ingest.caption_report import build_caption_review
+
+    doc = "d" * 16
+    data = parse_settings.resolve(parse_settings.paths.data_dir)
+    (data / "elements" / doc).mkdir(parents=True)
+    element = {"element_id": "a", "doc_id": doc, "source_file": "x.pdf", "page": 3, "bbox": [0, 0, 10, 10],
+               "type": "vector_figure", "section_path": ["Part 1"], "text": "41%", "caption": "The PDF caption",
+               "asset_path": f"assets/{doc}/p3_vector_figure_1.png", "content_hash": "hash-a", "status": "ok",
+               "skip_reason": None}
+    (data / "elements" / doc / "elements.jsonl").write_text(json.dumps(element) + "\n", encoding="utf-8")
+    import_captions(_write(tmp_path / "captions.jsonl", [_record("a")]), doc, parse_settings)
+    page = build_caption_review(doc, parse_settings).read_text(encoding="utf-8")
+    assert "Next-token probabilities" in page and "The PDF caption" in page and "p3_vector_figure_1.png" in page
+    assert "Part 1" in page
 
 
 def test_low_confidence_captions_need_review(tmp_path, parse_settings):

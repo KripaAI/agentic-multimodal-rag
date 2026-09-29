@@ -107,11 +107,12 @@ class CaptionCache:
         return self._records.get(cache_key(image_hash, model_path, prompt_version))
 
     def put(self, record: CaptionRecord) -> None:
-        """Store an accepted (`ok`) caption; `needs_review` records are never cached."""
+        """Store an accepted (`ok`) caption; `needs_review` records are never cached. A changed
+        record for the same key is appended and wins on the next load (the file is append-only)."""
         if record.status != "ok":
             return
         key = cache_key(record.image_hash, record.model_path, record.prompt_version)
-        if key not in self._records:
+        if self._records.get(key) != record:
             self._records[key] = record
             self.path.parent.mkdir(parents=True, exist_ok=True)
             with self.path.open("a", encoding="utf-8") as f:

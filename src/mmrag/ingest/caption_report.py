@@ -81,6 +81,40 @@ def _caption_html(record: dict | None) -> str:
             f"{_data_html(c.get('extracted_data'))}")
 
 
+def build_caption_review(doc_id: str, settings) -> Path:
+    """All imported captions of one document beside their figures, for the owner's spot-check
+    (plan Phase 2 gate). Written to data/captions/{doc_id}/caption_review.html."""
+    data = settings.resolve(settings.paths.data_dir)
+    elements = {e["element_id"]: e for e in _load(data / "elements" / doc_id / "elements.jsonl")}
+    records = _load(data / "captions" / doc_id / "captions.jsonl")
+    records.sort(key=lambda r: (elements.get(r["element_id"], {}).get("page", 0), r["element_id"]))
+    out = data / "captions" / doc_id / "caption_review.html"
+
+    rows = []
+    for n, r in enumerate(records, 1):
+        e = elements.get(r["element_id"], {})
+        img = f"../../{e['asset_path']}" if e.get("asset_path") else ""
+        note = f"<div class=\"small warn\">check applied: {escape(r['error'])}</div>" if r.get("error") and \
+            r["status"] == "ok" else ""
+        rows.append(
+            f"<section class=\"fig\"><div><div class=\"tag muted\">#{n} · page {e.get('page', '?')}</div>"
+            f"<img loading=\"lazy\" src=\"{escape(img)}\" alt=\"{escape(r['element_id'])}\">"
+            f"<div class=\"small\"><code>{escape(r['element_id'])}</code></div>"
+            f"<div class=\"small muted\">Section: {escape(' > '.join(e.get('section_path', [])) or '(none)')}</div>"
+            f"<div class=\"small muted\">PDF caption: {escape(e.get('caption') or '(none)')}</div></div>"
+            f"<div class=\"col\">{_caption_html(r)}{note}</div></section>")
+    ok = sum(r["status"] == "ok" for r in records)
+    out.write_text(f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Caption review</title><style>{_STYLE}</style></head>
+<body><main><h1>Caption review: {len(records)} figures</h1>
+<div class="muted">{ok} valid · {len(records) - ok} need review · model {escape(records[0]['model_id'] if records else '')}.
+Spot-check any 10: a caption passes if it names the key labels correctly and describes the right flow or values.
+Green chart values are printed on the figure; amber ones were read off the bars.</div>
+{''.join(rows)}</main></body></html>
+""", encoding="utf-8")
+    return out
+
+
 def build_pilot_report(run_dir: Path, bundle: Path, out: Path) -> Path:
     jobs = _load(bundle / "jobs.jsonl")
     models = [m for m in MODEL_ORDER if (run_dir / m).is_dir()]
