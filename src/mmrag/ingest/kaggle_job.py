@@ -64,8 +64,9 @@ def _kaggle(*args: str) -> subprocess.CompletedProcess:
     return r
 
 
-def _wait_until_ready(dataset: str, timeout_s: int = 300) -> None:
-    """A new dataset version is processed for a while before a kernel can mount it."""
+def _wait_until_ready(dataset: str, timeout_s: int = 1800) -> None:
+    """A new dataset version is processed for a while before a kernel can mount it (about 20
+    minutes for the 13 MB Post-Training bundle in Phase 5)."""
     import time
 
     deadline = time.monotonic() + timeout_s
