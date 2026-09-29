@@ -276,13 +276,38 @@ def cmd_search_report(settings: Settings, args: argparse.Namespace) -> int:
 def cmd_ask(settings: Settings, args: argparse.Namespace) -> int:
     """Answer one question with the agent; write the answer page; print its path, the thread
     id (for follow-ups), cost, latency and the trace id."""
-    raise NotImplementedError
+    from mmrag.agent.graph import run_query
+    from mmrag.agent.render import write_answer_page
+
+    run = run_query(args.question, settings, thread_id=args.thread, model=args.model)
+    page = write_answer_page(args.question, run, settings)
+    cost = f"${run.cost_usd:.4f}" if run.cost_usd is not None else "cost n/a (add the model to `pricing`)"
+    print(f"Answer page: {page}")
+    print(f"thread {run.thread_id} (continue with --thread {run.thread_id}) · {run.model} · {run.rounds} rounds · "
+          f"{len(run.tool_calls)} tool calls · {cost} · {run.latency_ms / 1000:.1f} s · validator "
+          f"{run.validator_result} · trace {run.trace_id}")
+    for n in run.answer.notices:
+        print(f"  notice: {n}")
+    return 0
 
 
 def cmd_ask_batch(settings: Settings, args: argparse.Namespace) -> int:
     """Answer every question in a YAML file with each model in --models; write each answer
     page and a comparison page (answers side by side, cost, latency, validator results)."""
-    raise NotImplementedError
+    from mmrag.agent.batch import load_questions, run_batch, write_comparison_page
+    from mmrag.agent.graph import run_query
+    from mmrag.agent.render import write_answer_page
+
+    questions = load_questions(Path(args.questions))
+    models = [m.strip() for m in args.models.split(",")] if args.models else [settings.agent.model]
+    unpriced = [m for m in models if m not in settings.pricing]
+    if unpriced:
+        print(f"Note: no price in config for {', '.join(unpriced)}; their cost is not counted toward --max-cost")
+    results = run_batch(questions, models, settings, ask=run_query, page=write_answer_page, max_cost=args.max_cost)
+    failed = sum(1 for out in results.values() for o in out.values() if o.error)
+    print(f"{len(questions)} questions x {len(models)} models, {failed} failed or skipped")
+    print(f"Comparison page: {write_comparison_page(questions, results, settings)}")
+    return 1 if failed else 0
 
 
 # ---------------------------------------------------------------- caption (Phase 2)
@@ -424,6 +449,8 @@ def main(argv: list[str] | None = None) -> int:
     batch_parser = sub.add_parser("ask-batch", help="answer a question file, optionally with several models")
     batch_parser.add_argument("questions", help="YAML file of questions")
     batch_parser.add_argument("--models", help="comma-separated models to compare (default: agent.model)")
+    batch_parser.add_argument("--max-cost", type=float, default=3.0,
+                              help="stop once priced spend passes this many US$ (default 3)")
     report_parser = sub.add_parser("search-report", help="run the fixed retrieval test queries (Phase 3 gate)")
     report_parser.add_argument("--queries", default=str(PROJECT_ROOT / "eval" / "retrieval_queries.yaml"))
     caption_parser = sub.add_parser("caption", help="VLM figure captioning on Kaggle (Phase 2)")

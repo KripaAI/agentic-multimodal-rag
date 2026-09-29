@@ -27,7 +27,7 @@ class Citation(_Model):
 class TextBlock(_Model):
     type: Literal["text"] = "text"
     markdown: str
-    citations: list[Citation] = Field(min_length=1)
+    citations: list[Citation]  # at least one, except in a "not found" answer (checked by the validator)
 
 
 class ImageBlock(_Model):
