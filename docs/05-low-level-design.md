@@ -1,8 +1,8 @@
 # Low-Level Design — Agentic Multimodal RAG
 
-**Status:** Draft v0.7 · **Date:** 2026-09-29 · **Implements:** [02-technical-specification.md](02-technical-specification.md) v0.9 · **Governed by:** [01-constitution.md](01-constitution.md) · **Diagram:** [06-lld-diagram.pdf](06-lld-diagram.pdf)
+**Status:** Draft v0.7 · **Date:** 2026-09-29 · **Implements:** [02-technical-specification.md](02-technical-specification.md) v0.9 · **Governed by:** [01-constitution.md](01-constitution.md) · **Diagram:** `docs/06-lld-diagram.pdf` (local copy, not in git)
 
-The high-level design (what the components are and how data flows) is in spec §3 and [04-flow-diagram.pdf](04-flow-diagram.pdf). This document is the **low-level design**: modules, functions and their contracts, database tables, algorithms, error handling and tests. It is what a developer implements from.
+The high-level design (what the components are and how data flows) is in spec §3 and in `docs/04-flow-diagram.pdf` (local copy, not in git). This document is the **low-level design**: modules, functions and their contracts, database tables, algorithms, error handling and tests. It is what a developer implements from.
 
 It contains no code. Function names and signatures are design contracts and may be refined during implementation, as long as the behaviour described here is kept.
 

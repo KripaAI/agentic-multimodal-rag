@@ -32,3 +32,9 @@ Thumbs.db
 
 # Source PDFs (large, third-party content); keep them out of git
 data/pdfs/
+data/*.html
+
+# Owner's rule: git holds code and .md documents only. The PDF copies and diagrams in
+# docs/ are kept locally (rebuild the PDFs with `python scripts/build_docs.py`).
+docs/*.pdf
+docs/*.svg
