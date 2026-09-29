@@ -1,6 +1,6 @@
 # Implementation Plan — Agentic Multimodal RAG
 
-**Status:** Draft v0.8 (test-driven development added; see spec §12) · **Date:** 2026-09-26 · **Implements:** [02-technical-specification.md](02-technical-specification.md) · **Governed by:** [01-constitution.md](01-constitution.md)
+**Status:** Draft v0.9 (LangGraph agent, long-term memory phase; see spec §12) · **Date:** 2026-09-29 · **Implements:** [02-technical-specification.md](02-technical-specification.md) · **Governed by:** [01-constitution.md](01-constitution.md)
 
 ---
 
@@ -8,7 +8,7 @@
 
 - Work proceeds **one phase at a time**. No code is written for a phase until the owner approves it (constitution W1, W2).
 - Each phase ends with a **gate**: the owner reviews the deliverables against the acceptance criteria and signs off (W3).
-- Phases 1–4 are built on **one PDF first** (Buildig-multimodal-rag.pdf, the most figure-heavy) and extended to the full corpus in Phase 5.
+- Phases 1–4 are built on **one PDF first** and extended to the full corpus in Phase 5. Phase 1 used Buildig-multimodal-rag.pdf (then all five PDFs were parsed and reviewed); from Phase 2 on, Transformers-in-Practice-Illustrated.pdf is the pilot, because its figures are drawn diagrams and charts.
 - Effort estimates are rough, in focused working sessions, and will be refined after Phase 1.
 - **Testing (constitution W5, LLD §10):** every phase's acceptance criteria also include:
   1. The **full automated test suite passes**.
@@ -23,11 +23,12 @@
 | 1 | Parsing | elements + figure PNGs + tables for 1 PDF | – | – | 2–3 sessions |
 | 2 | VLM captioning | captions for all figures of 1 PDF | ✓ (Kaggle/Colab) | – | 2 sessions |
 | 3 | Enrichment and indexing | PostgreSQL schema + hybrid search working | – | ✓ (if OpenAI embeddings) | 1–2 sessions |
-| 4 | Agent and chart engine (CLI) | end-to-end multimodal answers in terminal/HTML | – | ✓ | 3 sessions |
+| 4 | Agent (LangGraph) and chart engine (CLI) | end-to-end multimodal answers in terminal/HTML; conversation threads | – | ✓ | 3–4 sessions |
 | 5 | Full corpus | all 5 PDFs ingested | ✓ | ✓ | 1–2 sessions |
 | 6 | Quality: rerank and evaluation | golden set, baseline scores, improvements | – | ✓ | 2–3 sessions |
 | 7 | UI and login | Streamlit chat app with email + password sign-in | – | ✓ | 2 sessions |
 | 8 | Hardening | incremental ingestion, logging, cost tracking, docs | – | ✓ | 1–2 sessions |
+| 9 | Long-term memory | per-user semantic and episodic memory, with user controls | – | ✓ | 2 sessions |
 
 ---
 
@@ -176,7 +177,7 @@
 
 ---
 
-## Phase 4: Agent and chart engine (CLI first)
+## Phase 4: Agent (LangGraph) and chart engine (CLI first)
 
 **Goal:** end-to-end multimodal answers, before building any UI.
 
@@ -184,10 +185,13 @@
 1. **Tool implementations:** `search_text`, `search_figures`, `search_tables`, `get_figure`, `get_table`, `view_page`, `compute`.
 2. **Chart engine:** `make_chart` with validation rules (spec §7.4); Plotly figures plus PNG export.
 3. **Answer schema:** block format (spec §5.4) through structured output. The agent cites by `id` only: `element_id` for figures and tables, `chunk_id` for text.
-4. **Agent loop:** plan → retrieve → sufficiency check → compose.
-   - **Parallel tool calls** are enabled.
-   - The planner tags each question; multi-part or comparison questions get up to 5 rounds, all others 3.
-   - When the limit is reached, the agent answers with what it has and states what is missing.
+4. **Agent graph (LangGraph, D3):** a `StateGraph` with nodes plan → agent ⇄ tools → compose → validate → (repair). Nodes call the OpenAI SDK directly; tools are plain functions; the LangGraph version is pinned.
+   - A **Postgres checkpointer** keeps each conversation as a thread (`thread_id`), so follow-up questions use earlier turns (FR-23). `mmrag ask` takes an optional `--thread`.
+   - **Agent model comparison:** the 10 sample questions with `gpt-4o-mini`, `gpt-5.4-mini` and one larger model, side by side with cost, latency and validator results; the owner picks (D4).
+   - Loop behaviour:
+     - **Parallel tool calls** are enabled.
+     - The planner tags each question; multi-part or comparison questions get up to 5 rounds, all others 3.
+     - When the limit is reached, the agent answers with what it has and states what is missing.
 5. **Answer validator:** constitution checks with one repair attempt. It also **hydrates each citation** with `source_file`, `page` and `bbox` from PostgreSQL, expands chunk citations into their elements, and rejects unknown IDs.
 6. **Output renderer:** a CLI command that writes each answer to a local HTML file, with text, images, charts and tables, for viewing in the browser.
 7. **Tracing and logging (spec §7.7, LLD §5.9):**
@@ -197,7 +201,8 @@
    - `compute` whitelist, and chart validation (values ∈ evidence, pie → bar fallback, "approximate" flag);
    - validator rules and citation hydration, and bbox conversion;
    - tool argument validation;
-   - agent loop termination and round limits, using a **mocked OpenAI client** (no API cost).
+   - graph termination, round limits and the repair path, using a **mocked OpenAI client** (no API cost);
+   - thread continuity: a follow-up in the same thread sees the previous turn; a new thread does not.
 
 **Deliverables:** working agent from the CLI; HTML answer output; per-query cost log.
 
@@ -262,7 +267,7 @@
 **Goal:** a usable chat application, available only to signed-in users.
 
 **Tasks**
-1. Streamlit chat layout with conversation history. Store each finished answer (hydrated blocks and chart figures) in `st.session_state`. Streamlit re-runs the script on every click, so viewing a source or expanding a table must render from stored state, never re-run the agent, validator or database queries. Rendered page images are cached.
+1. Streamlit chat layout with conversation history. Each chat is a LangGraph thread (from Phase 4), so a user can reopen and continue an earlier conversation. Store each finished answer (hydrated blocks and chart figures) in `st.session_state`. Streamlit re-runs the script on every click, so viewing a source or expanding a table must render from stored state, never re-run the agent, validator or database queries. Rendered page images are cached.
 2. Block renderers:
    - Markdown text with citation chips.
    - Original images with captions and click-to-enlarge.
@@ -272,7 +277,7 @@
    - The page is rendered at a known DPI.
    - `bbox` is converted from PDF points to pixels (× DPI/72), with rotated pages handled (spec §7.5).
    - The highlight is drawn directly from the hydrated citation, with no extra lookup.
-4. Progress indicator showing the agent's steps ("searching figures…").
+4. Progress indicator showing the agent's steps ("searching figures…"), streamed from the LangGraph graph.
 5. Sidebar with per-session cost and token counter.
 6. **Sign-in (spec §7.6, LLD §5.8):**
    - Migrations for `users`, `sessions`, `auth_events`, plus `user_id` and `answer_json` on `query_log`.
@@ -327,6 +332,32 @@
 
 ---
 
+## Phase 9: Long-term memory
+
+**Goal:** the assistant remembers each user across conversations (spec §7.8, constitution P13), without memory ever becoming evidence.
+
+**Tasks**
+1. **Store:** LangGraph Store on the project PostgreSQL with pgvector search; namespaces per user and memory kind (D15).
+2. **Semantic memory:** after a validated answer, a low-cost model extracts stable facts and preferences as short statements; an existing statement on the same subject is updated, not duplicated.
+3. **Episodic memory:** when a thread ends (or goes idle), a summary of what was asked, found and left open is stored.
+4. **Recall:** a `recall_memory` node retrieves the user's most relevant memories before planning and passes them as user context.
+5. **Validator rule:** no citation to a memory; no answer fact supported only by memory (P13).
+6. **User controls (FR-25):** list and delete memories, switch memory off (CLI first, then a UI page); account deletion removes memories.
+7. **Privacy and retention (NFR-13):** memory text out of production telemetry; retention in config; cleanup command.
+8. **Evaluation:** RAGAS faithfulness unchanged with memory on; a small follow-up set checks that memory resolves references ("the chart you showed me last week") and preferences.
+9. **Tests (W5), test-first:** extraction and update rules, namespace isolation between users, deletion, the P13 validator rule, recall on a mocked store.
+
+**Acceptance criteria**
+- A preference stated in one conversation is applied in a later one.
+- A follow-up that refers to an earlier conversation is understood.
+- One user can never see another user's memories.
+- Deleted memories are no longer recalled; memory switched off means none are stored or recalled.
+- Faithfulness and citation accuracy do not drop with memory on (Phase 6 baseline).
+
+**Gate:** owner demo and approval.
+
+---
+
 ## Milestones
 
 | Milestone | Reached after | What the owner can do |
@@ -337,6 +368,7 @@
 | **M4: Whole library** | Phase 5 | Ask across all 5 PDFs |
 | **M5: Measured quality** | Phase 6 | See scores and trust the chart numbers |
 | **M6: Usable app** | Phase 7 | Sign in and chat in a browser UI |
+| **M7: Assistant that remembers** | Phase 9 | Continue across conversations; see and delete what it remembers |
 
 ## Cost expectations (estimates)
 
@@ -352,4 +384,4 @@
 
 ## Next step
 
-The owner reviews the three documents, answers the open decisions D1–D6, D8 and D9 (spec §11), and approves **Phase 0**.
+Phases 0–3 are complete. Next: the owner approves the **Phase 4** plan (LangGraph agent, chart engine, validator, answer rendering, agent model comparison).

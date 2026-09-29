@@ -1,12 +1,12 @@
 # Technical Specification — Agentic Multimodal RAG
 
-**Status:** Draft v0.8 · **Date:** 2026-09-26 · **Governed by:** [01-constitution.md](01-constitution.md) · See the [changelog](#12-changelog) for what changed in each version
+**Status:** Draft v0.9 · **Date:** 2026-09-29 · **Governed by:** [01-constitution.md](01-constitution.md) · See the [changelog](#12-changelog) for what changed in each version
 
 ---
 
 ## 1. Overview
 
-The system ingests a corpus of PDFs, extracts every text passage, figure and table with provenance, and captions figures with a vision-language model (VLM) on a temporary GPU. It indexes everything for hybrid search. At query time, an OpenAI-powered agent retrieves evidence with tools and returns a **structured multimodal answer**: text blocks, original images, generated charts and data tables, each with citations.
+The system ingests a corpus of PDFs, extracts every text passage, figure and table with provenance, and captions figures with a vision-language model (VLM) on a temporary GPU. It indexes everything for hybrid search. At query time, an agent (a LangGraph state graph calling OpenAI models) retrieves evidence with tools and returns a **structured multimodal answer**: text blocks, original images, generated charts and data tables, each with citations. Conversations are multi-turn, and a per-user long-term memory (semantic and episodic) personalises answers without ever serving as evidence.
 
 ### 1.1 Corpus (current)
 
@@ -51,6 +51,9 @@ A full corpus profile is the first task of Phase 1.
 | FR-20 | Keep per-user chat history, and a security audit log of sign-in events. |
 | FR-21 | Trace every question and every ingestion run end to end with OpenTelemetry: plan, agent rounds, tool calls, LLM calls, database queries, validation. |
 | FR-22 | Provide an admin view of usage, errors, latency and cost, with a link from any answer to its trace. |
+| FR-23 | Support multi-turn conversations: follow-up questions in a thread use the earlier turns, and a thread can be resumed later. |
+| FR-24 | Keep a per-user long-term memory: **semantic** (stable facts and preferences, e.g. "prefers charts over tables", "works on RLHF") and **episodic** (summaries of past conversations). Memory personalises and disambiguates questions; it is never cited as evidence (P13). |
+| FR-25 | Let each user see and delete their memories, and switch memory off. |
 
 ### 2.2 Non-functional requirements
 
@@ -68,6 +71,7 @@ A full corpus profile is the first task of Phase 1.
 | NFR-10 | Recoverability | Database backed up (e.g. `pg_dump` or managed snapshots) in production. The full index can be rebuilt from the PDFs plus cached captions and embeddings. |
 | NFR-11 | Credential security | Argon2id password hashes only; no plain-text passwords or session tokens stored or logged; generic sign-in errors; temporary lockout after repeated failures; HTTPS in production. |
 | NFR-12 | Telemetry safety | Telemetry never blocks or breaks the app; no secrets, passwords or tokens in telemetry; prompt and document content captured only when enabled (dev); retention limits applied (D13). |
+| NFR-13 | Memory privacy | Memories are scoped to one user, never shared, deletable by the user, excluded from telemetry content in production, and kept only for their retention period. |
 
 ---
 
@@ -87,7 +91,8 @@ PDFs ─► [1 Parse] ─► elements.jsonl + assets/*.png
                     └────────────────────────────────────────────────────────────────────────────┘
 
                     ┌──────────────────── QUERY (online, CPU + OpenAI API) ─────────────────────┐
-User ─► UI ─► [Agent: OpenAI LLM + tools] ◄─► Retrieval tools ─► PostgreSQL + figure PNGs
+User ─► UI ─► [Agent: LangGraph graph, OpenAI LLM + tools] ◄─► Retrieval tools ─► PostgreSQL + figure PNGs
+                         ├─► conversation checkpoints + long-term memory (PostgreSQL)
                          │
                          ├─► make_chart (Plotly, local) ─► chart spec + PNG
                          ▼
@@ -108,7 +113,8 @@ User ─► UI ─► [Agent: OpenAI LLM + tools] ◄─► Retrieval tools ─�
 | 12 | **PostgreSQL** | Single source of truth: metadata, captions, tables, vectors, keyword index | Local Docker (dev) / managed Postgres (prod) |
 | 13 | **Auth** | Sign-in, sessions, lockout, per-user limits, audit events | App server + PostgreSQL |
 | 14 | **Observability** | OpenTelemetry traces, JSON logs and metrics for every question and ingestion run | App + trace viewer (Phoenix/Jaeger) |
-| 7 | **Agent** | Tool-calling loop over the OpenAI API | OpenAI API |
+| 7 | **Agent** | LangGraph state graph (plan → tool rounds → compose → validate → repair) with OpenAI SDK calls inside the nodes; conversation checkpoints per thread | Laptop CPU + OpenAI API |
+| 15 | **Memory** | Per-user semantic and episodic memory: extract after a turn, recall at planning; never evidence | Laptop CPU + PostgreSQL + OpenAI API |
 | 8 | **Chart engine** | Validates data, chooses and renders the chart | Laptop CPU |
 | 9 | **Answer validator** | Enforces constitution rules on the final answer | Laptop CPU |
 | 10 | **UI** | Chat interface rendering the answer blocks | Laptop (Streamlit) |
@@ -139,7 +145,10 @@ User ─► UI ─► [Agent: OpenAI LLM + tools] ◄─► Retrieval tools ─�
 | Intermediate files | JSONL + PNG on disk (`data/`) | Audit trail of each ingestion stage (P8); Postgres is authoritative at query time | Proposed |
 | Charts | Plotly (interactive in UI) + static PNG export (kaleido) | Hover shows exact values (P1) | Proposed |
 | UI | Streamlit | Fastest route to a chat UI with images and charts | **Open** |
-| Agent framework | Plain OpenAI SDK tool-calling loop (no LangGraph or LlamaIndex) | P9 simplicity; full control | **Open** |
+| Agent framework | **LangGraph**, for orchestration only: our own `StateGraph`; nodes call the OpenAI SDK directly (no LangChain agents or chat-model wrappers, no prebuilt ReAct agent); tools stay plain Python functions; version pinned | Checkpointing (multi-turn threads, resume), a memory store, streaming of steps to the UI and human-in-the-loop interrupts come built in; the validator, round limits and citation rules stay in our code (P2, P4, P5); models stay a config change (P6) | **Decided** (D3) |
+| Conversation state | LangGraph **Postgres checkpointer** in the project database | One store (P8a); threads survive restarts | **Decided** |
+| Long-term memory | LangGraph **Store** on PostgreSQL + pgvector (semantic search over memories), per-user namespaces | One store (P8a); same embeddings as retrieval | **Decided** (D15) |
+| Tool protocol | Tools are in-process Python functions. **No MCP server** (owner decision, D16) | Nothing outside the app needs the tools; avoids a process hop | **Decided** |
 | Config | `.env` + a single config file | P6 swappability | Proposed |
 | Authentication | Email + password accounts stored in PostgreSQL; **Argon2id** hashing (`argon2-cffi`); server-side sessions; admin-created accounts only | Owner's choice; no external identity provider needed; Streamlit's built-in login supports only OpenID Connect providers, so password sign-in is implemented in the app | **Decided** |
 | Observability | **OpenTelemetry** (free, open-source standard): Python SDK with OTLP export; auto-instrumentation for the OpenAI SDK and psycopg; manual spans for the agent, tools, validator and ingestion | Vendor-neutral; each question becomes one inspectable trace of the agent's steps | **Decided** |
@@ -237,7 +246,9 @@ An answer is an ordered list of blocks:
 | `users` | `user_id` (PK), `email` (unique, lower-case), `password_hash`, `role` (`admin` · `user`), `status` (`active` · `disabled`), `must_change_password`, `failed_attempts`, `locked_until`, `created_at`, `last_login_at` | Accounts (§7.6) |
 | `sessions` | `session_id` (PK), `user_id` (FK, cascade), `token_hash` (unique), `created_at`, `last_seen_at`, `expires_at`, `revoked_at` | Server-side sessions |
 | `auth_events` | `event_id` (PK), `user_id` (nullable FK), `email_attempted`, `event_type`, `ip`, `created_at` | Security audit log |
-| `query_log` | `query_id` (PK), `trace_id`, `user_id` (FK), question, rounds, tool calls, tokens, cost, latency, validator result, `answer_json`, `created_at` | Per-user history, cost and limits |
+| `query_log` | `query_id` (PK), `trace_id`, `user_id` (FK), `thread_id`, question, rounds, tool calls, tokens, cost, latency, validator result, `answer_json`, `created_at` | Per-user history, cost and limits |
+| LangGraph checkpoint tables | created by the checkpointer's own setup; keyed by `thread_id` | Conversation state per thread (FR-23) |
+| LangGraph store tables | created by the store's own setup; namespace `("memories", user_id, kind)` with pgvector index | Long-term semantic and episodic memory (FR-24) |
 
 **Indexes on `search_chunks`:**
 - HNSW on `embedding` (cosine), partial per `collection`.
@@ -350,12 +361,14 @@ Deleting a `documents` row removes all of its data through cascading foreign key
 2. **Keyword:** top 30 matching `websearch_to_tsquery` on `tsv_english` **or** `tsv_simple`, ranked by `ts_rank_cd`.
 3. **RRF fusion:** each chunk scores Σ 1 / (60 + rank) across the two lists. Chunks found by only one list still count.
 4. Return the top *k* (default 8). Each chunk's elements are **aggregated into one array** of `{element_id, page, bbox}` in reading order, so every chunk is **exactly one row**. A plain join would return one row per element, duplicating chunks and breaking the top-*k* count.
-6. **Related items** (v0.9, at the owner's request): each result carries the elements linked to it (§6.3). A text result lists its linked figures and tables; a figure or table result lists its linked paragraphs. Related elements come along even when their own search missed them.
 5. **Optional rerank** of the top ~20 with a local cross-encoder (Phase 6).
+6. **Related items** (v0.9, at the owner's request): each result carries the elements linked to it (§6.3). A text result lists its linked figures and tables; a figure or table result lists its linked paragraphs. Related elements come along even when their own search missed them.
 
 The query embedding is computed once per query and cached for identical queries.
 
 ### 7.2 Agent loop
+Implemented as a LangGraph `StateGraph` (D3): nodes `recall_memory → plan → agent ⇄ tools → compose → validate → (repair → validate) → remember`. Each conversation is a checkpointed thread (`thread_id`), so follow-ups see earlier turns (FR-23).
+
 1. **Plan:** the agent classifies the question as conceptual, visual, quantitative, mixed or multi-part comparison, and decides which tools to use.
 2. **Retrieve, with parallel tool calls:** independent tools are called **in the same turn**. For example, round 1 typically calls `search_text` + `search_figures` + `search_tables` together.
 3. **Check sufficiency:** the agent asks whether the evidence answers every part of the question. If not, it reformulates and runs another round.
@@ -367,6 +380,8 @@ The query embedding is computed once per query and cached for identical queries.
 5. **Compose:** the agent produces the answer in the block format of §5.4 (structured output), citing by `id` only (`element_id` or `chunk_id`, §5.4).
 6. **Validate:** the answer validator checks the result and hydrates citations (§7.3). On failure, the agent gets one repair attempt.
 
+7. **Memory:** before planning, the user's relevant memories are recalled; after a validated answer, new memories are extracted (§7.8).
+
 ### 7.3 Answer validator (constitution enforcement)
 - Every block has at least one citation whose `id` exists (an `element_id` or a `chunk_id`). Unknown IDs fail validation.
 - **Citation hydration:** for each valid `id`, the validator fills in `source_file`, `page` and `bbox` from PostgreSQL (`elements` table): one location for an `element_id`, and one per covered element for a `chunk_id`. Any coordinates or page numbers the LLM wrote itself are discarded.
@@ -374,6 +389,7 @@ The query embedding is computed once per query and cached for identical queries.
 - Every number in a `chart` block appears in retrieved evidence or in a `compute` result (P4).
 - Every chart carries its data table. Pie charts must represent parts of a whole.
 - Charts with any estimated values are labelled "approximate".
+- No citation points to a memory, and no fact in the answer is supported only by a memory (P13).
 
 ### 7.4 Chart engine rules
 - **Pie:** at most about 8 slices, non-negative values, parts of a whole. Otherwise the engine falls back to a bar chart.
@@ -447,6 +463,16 @@ The query embedding is computed once per query and cached for identical queries.
 
 ---
 
+### 7.8 Long-term memory (semantic and episodic)
+- **Semantic memory:** stable facts and preferences about the user, written as short statements ("prefers answers with charts", "is studying RLHF"). Updated rather than duplicated when a statement changes.
+- **Episodic memory:** a short summary of each finished conversation: what was asked, what was found, what was left open.
+- **Write path:** after a validated answer, a `remember` node asks a low-cost model to extract new semantic statements and, at the end of a thread, an episode summary. Stored in the user's namespace with an embedding.
+- **Read path:** a `recall_memory` node searches the user's memories by meaning (top few) and passes them to the planner as **context about the user**, never as document evidence.
+- **Rules (P13):** memories are never cited, never charted and never quoted as facts about the documents; they only shape what to search for and how to present it. A memory that contradicts the documents is ignored.
+- **User control (FR-25):** each user can list and delete their memories and switch memory off; deleting an account deletes its memories.
+- **Privacy (NFR-13):** per-user namespaces only; memory text is captured in traces only in dev; retention set in config.
+- **Phasing:** conversation threads (checkpointer) arrive with the agent in Phase 4; long-term memory is built in Phase 9, after the UI.
+
 ## 8. Project structure (proposed)
 
 ```
@@ -469,7 +495,8 @@ Important-gen-ai-concept/
 │   ├── auth/                # passwords, sessions, sign-in, limits, audit events
 │   ├── obs/                 # OpenTelemetry setup: traces, JSON logs, metrics, retention cleanup
 │   ├── retrieval/           # hybrid search, fusion, rerank
-│   ├── agent/               # loop, tools, prompts, answer schema, validator
+│   ├── agent/               # LangGraph graph, nodes, tools, prompts, answer schema, validator
+│   ├── memory/              # semantic + episodic memory: extract, store, recall (Phase 9)
 │   ├── charts/              # chart engine
 │   └── config.py
 ├── app/                     # Streamlit UI
@@ -562,6 +589,9 @@ The set is a versioned file (`eval/golden_set.jsonl`). RAGAS's test-set generato
 | OpenAI model/API changes | Breakage | Model ID in config; thin client wrapper (P6) |
 | Cost growth from agent loops | Budget overrun | Cap on tool rounds; token logging; cheaper model for sub-steps |
 | Scanned pages with poor quality | Missing text | VLM transcription + `needs_review` flag |
+| LangGraph API changes between releases | Broken agent after an upgrade | Version pinned; used only for orchestration (graph, checkpointer, store); agent-loop tests on a mocked OpenAI client |
+| Memory presented as fact about the documents | Ungrounded answers | P13; memories passed as user context only; validator rejects memory citations; evaluation checks faithfulness |
+| Wrong or stale memories | Misleading personalisation | Semantic memories updated in place; user can view and delete; memory can be switched off |
 
 ---
 
@@ -571,8 +601,8 @@ The set is a versioned file (`eval/golden_set.jsonl`). RAGAS's test-set generato
 |---|---|---|---|
 | D1 | Embedding model | OpenAI `text-embedding-3-large` (1,536 dims) vs local `bge-m3` (1,024 dims) | **Decided: text-embedding-3-large at 1,536 dims** (fixed in the database schema) |
 | D2 | UI | Streamlit vs Gradio vs CLI first | Streamlit |
-| D3 | Agent framework | Plain SDK vs LangGraph vs LlamaIndex | Plain OpenAI SDK |
-| D4 | OpenAI model for the agent | Owner's available models | **Decided: gpt-4o-mini** (agent and table summaries; $0.15 / $0.60 per 1M tokens, about $0.005 per question). Revisit if the Phase 6 evaluation shows quality gaps. |
+| D3 | Agent framework | Plain SDK vs LangGraph vs LlamaIndex | **Decided (2026-09-29): LangGraph**, orchestration only, OpenAI SDK inside nodes (§4). Changed from plain SDK at the owner's request, for multi-turn threads, long-term memory and step streaming. |
+| D4 | OpenAI model for the agent | Owner's available models | **Decided: gpt-4o-mini** (agent and table summaries; $0.15 / $0.60 per 1M tokens, about $0.005 per question). Revisit if the Phase 6 evaluation shows quality gaps. **Update 2026-09-29:** table summaries moved to gpt-5.4-mini (owner's pick, Phase 3); the agent model is re-chosen by a side-by-side comparison in Phase 4. |
 | D5 | GPU host | Kaggle vs Colab vs rented | Kaggle (free, generous weekly quota) |
 | D6 | Move PDFs into `data/pdfs/` | Move vs leave in place | **Decided: moved** to `data/pdfs/` (2026-09-26) |
 | D7 | Database | PostgreSQL + pgvector vs Pinecone + metadata DB | **Decided: PostgreSQL + pgvector** (single source of truth) |
@@ -583,6 +613,8 @@ The set is a versioned file (`eval/golden_set.jsonl`). RAGAS's test-set generato
 | D12 | Trace viewer | Phoenix (LLM-aware, free to self-host) vs Jaeger (fully open source) vs Grafana Tempo | Phoenix for development; confirm for production |
 | D13 | Telemetry content and retention | What telemetry may contain, and for how long | Content in dev only; traces 14 d, logs 30 d, query log 90 d, audit log 1 yr |
 | D14 | RAGAS judge model | Same model as the agent vs a different, capable OpenAI model | **Decided: gpt-4.1** (different from the agent; fixed for each baseline) |
+| D15 | Long-term memory store | LangGraph Store on PostgreSQL vs a separate memory service | **Decided: LangGraph Store on the project PostgreSQL** (P8a) |
+| D16 | MCP server for the tools | Expose the tools over MCP vs in-process only | **Decided (owner, 2026-09-29): no MCP server**; tools are in-process functions |
 
 ---
 
@@ -598,3 +630,4 @@ The set is a versioned file (`eval/golden_set.jsonl`). RAGAS's test-set generato
 | 0.6 | 2026-09-26 | **Observability with OpenTelemetry.** FR-21, FR-22, NFR-12; Observability component (§3.2); stack rows for OpenTelemetry, trace viewer and JSON logging (§4); `query_log.trace_id` (§5.5); new §7.7 (trace per question and per ingestion, GenAI conventions, logs, metrics, content capture, export, retention, failure safety, admin view); `obs/` package and Phoenix in docker-compose (§8); three new risks; D12, D13. |
 | 0.7 | 2026-09-26 | **RAGAS evaluation.** Stack row (§4); golden-set entry fields and RAGAS test-set drafting (§9); metrics table rewritten with RAGAS (faithfulness, multimodal faithfulness, relevancy, context precision/recall, factual correctness, tool call accuracy) plus custom metrics; regression gate; judge reliability; two new risks; D14. |
 | 0.8 | 2026-09-27 | Testing row in §4 (pytest, markers, test database, mocked OpenAI, CI), following constitution W5. Decisions D1, D4, D6 and D14 recorded as decided. |
+| 0.9 | 2026-09-29 | **§6.3:** tables linked too; link rule 3 becomes the most related nearby paragraph (meaning + shared labels) or unlinked. **§7.1:** related items attached to search results. **Agent on LangGraph (D3 changed):** orchestration only, OpenAI SDK in nodes; Postgres checkpointer for multi-turn threads (FR-23). **Long-term memory:** FR-24, FR-25, NFR-13, new §7.8, memory component, stack rows, schema rows, validator rule, risks, D15. **No MCP server** (D16). All at the owner's request. |
