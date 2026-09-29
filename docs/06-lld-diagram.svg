@@ -133,7 +133,7 @@
 <path d="M1150,515 L1150,553" class="ln" marker-end="url(#arr)"/>
 <text x="1160" y="545" class="lbl" text-anchor="start">one transaction per PDF</text>
 <rect x="20" y="555" width="1570" height="355" rx="12" fill="#FAFBFC" stroke="#D0D7E2"/>
-<text x="40" y="580" class="sec">② POSTGRESQL SCHEMA: pgvector + full-text (LLD §4) · dev: pgvector/pgvector:pg16 in a named Docker volume · + users, sessions, auth_events (LLD §4.1)</text>
+<text x="40" y="580" class="sec">② POSTGRESQL SCHEMA: pgvector + full-text (LLD §4) · dev: pgvector/pgvector:pg16 in a named Docker volume · + users, sessions, auth_events, LangGraph checkpoints + memory store (LLD §4.1)</text>
 <rect x="40" y="615" width="200" height="245" rx="6" fill="#F7F8FA" stroke="#6B7280" stroke-width="1.4"/>
 <path d="M40,621 a6,6 0 0 1 6,-6 h188 a6,6 0 0 1 6,6 v18 h-200 z" fill="#D9DEE6"/>
 <text x="50" y="632" class="mt">documents</text>
@@ -180,13 +180,14 @@
 <text x="803" y="748.0" class="m" xml:space="preserve">   summary     text</text>
 <rect x="1030" y="615" width="215" height="245" rx="6" fill="#F7F8FA" stroke="#6B7280" stroke-width="1.4"/>
 <path d="M1030,621 a6,6 0 0 1 6,-6 h203 a6,6 0 0 1 6,6 v18 h-215 z" fill="#D9DEE6"/>
-<text x="1040" y="632" class="mt">figure_links</text>
-<text x="1038" y="655.0" class="m" xml:space="preserve">FK figure_id → elements</text>
-<text x="1038" y="670.5" class="m" xml:space="preserve">FK text_element_id</text>
-<text x="1038" y="686.0" class="m" xml:space="preserve">      → elements</text>
-<text x="1038" y="701.5" class="m" xml:space="preserve">   method  explicit |</text>
-<text x="1038" y="717.0" class="m" xml:space="preserve">           deictic |</text>
-<text x="1038" y="732.5" class="m" xml:space="preserve">           proximity</text>
+<text x="1040" y="632" class="mt">element_links</text>
+<text x="1038" y="655.0" class="m" xml:space="preserve">FK target_id → elements</text>
+<text x="1038" y="670.5" class="m" xml:space="preserve">      (figure | table)</text>
+<text x="1038" y="686.0" class="m" xml:space="preserve">FK text_element_id</text>
+<text x="1038" y="701.5" class="m" xml:space="preserve">      → elements</text>
+<text x="1038" y="717.0" class="m" xml:space="preserve">   method  explicit |</text>
+<text x="1038" y="732.5" class="m" xml:space="preserve">           deictic | related</text>
+<text x="1038" y="748.0" class="m" xml:space="preserve">   score   real</text>
 <rect x="1265" y="615" width="310" height="245" rx="6" fill="#F7F8FA" stroke="#6B7280" stroke-width="1.4"/>
 <path d="M1265,621 a6,6 0 0 1 6,-6 h298 a6,6 0 0 1 6,6 v18 h-310 z" fill="#D9DEE6"/>
 <text x="1275" y="632" class="mt">search_chunks</text>
@@ -221,17 +222,17 @@
 <text x="50" y="1078" class="m" xml:space="preserve">  page @150 DPI, bbox×DPI/72</text>
 <text x="50" y="1093" class="m" xml:space="preserve">no agent re-run on clicks</text>
 <rect x="280" y="980" width="330" height="215" rx="8" fill="#E2F4E8" stroke="#2E8B57" stroke-width="1.4"/>
-<text x="290" y="999" class="mt">agent/loop.py</text>
-<text x="290" y="1018" class="m" xml:space="preserve">run_query(q) → Answer</text>
-<text x="290" y="1033" class="m" xml:space="preserve">1 plan(q) → qtype, round_limit</text>
-<text x="290" y="1048" class="m" xml:space="preserve">    (3 default | 5 multi-part)</text>
-<text x="290" y="1063" class="m" xml:space="preserve">2 LLM turn: system + tool schemas</text>
-<text x="290" y="1078" class="m" xml:space="preserve">3 tool_calls → tools.dispatch()</text>
-<text x="290" y="1093" class="m" xml:space="preserve">    (parallel in one turn)</text>
-<text x="290" y="1108" class="m" xml:space="preserve">4 append results; rounds += 1</text>
-<text x="290" y="1123" class="m" xml:space="preserve">5 repeat until no calls / limit</text>
-<text x="290" y="1138" class="m" xml:space="preserve">6 compose → Answer JSON</text>
-<text x="290" y="1153" class="m" xml:space="preserve">    blocks cite ids only</text>
+<text x="290" y="999" class="mt">agent/graph.py  (LangGraph)</text>
+<text x="290" y="1018" class="m" xml:space="preserve">run_query(q, thread_id) → Answer</text>
+<text x="290" y="1033" class="m" xml:space="preserve">StateGraph · OpenAI SDK in nodes</text>
+<text x="290" y="1048" class="m" xml:space="preserve">recall_memory → plan: qtype,</text>
+<text x="290" y="1063" class="m" xml:space="preserve">    round_limit (3 | 5 multi-part)</text>
+<text x="290" y="1078" class="m" xml:space="preserve">agent ⇄ tools (parallel calls)</text>
+<text x="290" y="1093" class="m" xml:space="preserve">    until no calls / round limit</text>
+<text x="290" y="1108" class="m" xml:space="preserve">compose → Answer JSON (ids only)</text>
+<text x="290" y="1123" class="m" xml:space="preserve">validate → repair once → remember</text>
+<text x="290" y="1138" class="m" xml:space="preserve">checkpointer: Postgres, per thread</text>
+<text x="290" y="1153" class="m" xml:space="preserve">memory: Store, per user (Phase 9)</text>
 <text x="290" y="1168" class="m" xml:space="preserve">model, effort, streaming: config</text>
 <rect x="640" y="980" width="300" height="215" rx="8" fill="#E3EDFB" stroke="#2B5797" stroke-width="1.4"/>
 <text x="650" y="999" class="mt">agent/tools.py</text>

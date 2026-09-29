@@ -144,10 +144,10 @@
 
   <!-- Agent container -->
   <rect x="300" y="530" width="590" height="400" rx="12" fill="#F3FAF5" stroke="#2E8B57" stroke-width="1.6" stroke-dasharray="7 5"/>
-  <text x="315" y="553" class="lbl" fill="#2E8B57">AGENT LOOP · OpenAI LLM with tool calling</text>
+  <text x="315" y="553" class="lbl" fill="#2E8B57">AGENT · LangGraph state graph · OpenAI LLM with tool calling in each node</text>
 
   <rect x="340" y="570" width="500" height="55" rx="9" class="api"/>
-  <text x="590" y="592" text-anchor="middle" class="t">Plan</text>
+  <text x="590" y="592" text-anchor="middle" class="t">Recall user memory → Plan</text>
   <text x="590" y="612" text-anchor="middle" class="b">classify (conceptual · visual · quantitative · multi-part), pick tools + round limit</text>
 
   <rect x="340" y="660" width="500" height="55" rx="9" class="api"/>
@@ -191,8 +191,9 @@
   <text x="896" y="705" class="lbl">results</text>
 
   <rect x="940" y="835" width="420" height="80" rx="10" class="sto"/>
-  <text x="1150" y="865" text-anchor="middle" class="t">PostgreSQL + figure PNGs</text>
-  <text x="1150" y="887" text-anchor="middle" class="s">built in ①: vectors · full-text · metadata · bbox</text>
+  <text x="1150" y="862" text-anchor="middle" class="t">PostgreSQL + figure PNGs</text>
+  <text x="1150" y="885" text-anchor="middle" class="s">built in ①: vectors · full-text · metadata · bbox</text>
+  <text x="1150" y="905" text-anchor="middle" class="s">+ conversation threads · user memory (never evidence)</text>
   <line x1="1150" y1="797" x2="1150" y2="833" class="ln" marker-start="url(#arr)" marker-end="url(#arr)"/>
 
   <!-- Observability -->
@@ -207,7 +208,7 @@
   <rect x="340" y="960" width="500" height="80" rx="9" class="cpu"/>
   <text x="590" y="983" text-anchor="middle" class="t">Answer validator (constitution checks)</text>
   <text x="590" y="1004" text-anchor="middle" class="b">citations point to real elements · hydrates file · page · bbox</text>
-  <text x="590" y="1024" text-anchor="middle" class="b">images are PDF originals · every chart number is in the sources</text>
+  <text x="590" y="1024" text-anchor="middle" class="b">images are PDF originals · chart numbers in sources · no memory cited</text>
 
   <line x1="590" y1="905" x2="590" y2="958" class="ln" marker-end="url(#arr)"/>
   <!-- fail loop -->

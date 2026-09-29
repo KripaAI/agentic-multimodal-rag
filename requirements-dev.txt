@@ -2,3 +2,4 @@
 -r requirements.txt
 pytest
 pytest-cov
+markdown  # scripts/build_docs.py: PDF copies of the docs
