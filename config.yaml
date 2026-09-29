@@ -59,7 +59,7 @@ search:
 agent:
   model: gpt-4o-mini                # D4
   effort: null
-  summary_model: gpt-4o-mini        # table summaries
+  summary_model: gpt-5.4-mini       # table summaries; owner's pick from the Phase 3 comparison
   rounds_default: 3
   rounds_multi: 5
 
