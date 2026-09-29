@@ -35,3 +35,14 @@ def test_queries_file_rejects_unknown_collection(tmp_path):
                  encoding="utf-8")
     with pytest.raises(Exception):
         load_queries(f)
+
+
+def test_a_query_can_also_accept_passages_in_other_files(tmp_path):
+    # Phase 5: "vLLM" is discussed in three books; any of their vLLM passages counts.
+    from mmrag.retrieval.report import expected_ids
+
+    f = tmp_path / "q.yaml"
+    f.write_text("- id: e3\n  query: vLLM\n  source: a.pdf\n  collection: text\n  expect: [p10:text:6]\n"
+                 "  kind: exact_term\n  also:\n    b.pdf: [p99:text:15]\n", encoding="utf-8")
+    (q,) = load_queries(f)
+    assert expected_ids(q, {"a.pdf": "A", "b.pdf": "B"}) == {"A:p10:text:6", "B:p99:text:15"}

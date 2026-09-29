@@ -38,6 +38,10 @@ enrich:
   proximity_window_pt: 150          # candidate paragraphs for a "related" link: this close vertically
   link_min_score: 0.4               # related link needs cosine + label_weight * label share >= this
   label_weight: 0.2                 # (tuned on the link report)
+  # Figures never indexed or shown (kept as skipped elements). Owner decision, Phase 5: this
+  # PDF prints unrelated course slides under ~80 of its 91 figure captions.
+  skip_figures_for:
+    - The_Complete_Guide_to_Post_Training_LLMs_v2_Expert_Edition.pdf
 
 chunk:
   min_tokens: 400
