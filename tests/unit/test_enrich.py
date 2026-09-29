@@ -67,6 +67,14 @@ def test_label_cross_check_flags_captions_that_misread_the_figure(parse_settings
     assert flagged.status == "needs_review" and "labels" in flagged.error
 
 
+def test_label_cross_check_treats_subscripts_as_digits(parse_settings):
+    """Real run: the PDF prints q₁k₁, the model writes q1k1; that is the same label."""
+    fig = _fig(1, 100, text="q₁k₁\nq₂k₂\nScaled scores")
+    doc = _doc([fig], captions=[_cap(fig.element_id, "s", "d", ["q1k1", "q2k2", "Scaled scores"])])
+    assert cross_check_labels(doc, parse_settings.enrich)[fig.element_id] == 1.0
+    assert doc.captions[fig.element_id].status == "ok"
+
+
 # ---------------------------------------------------------------- links
 
 def _links(doc, settings):
@@ -108,6 +116,32 @@ def test_wrong_neighbour_links_the_related_paragraph(parse_settings):
     links, unlinked = _links(doc, parse_settings)
     assert links == {("p1:vector_figure:1", "p1:text:2", "related")}
     assert unlinked == []
+
+
+def test_headings_are_not_link_candidates(parse_settings):
+    """Real run: figures linked to a heading ("The draft model trick") that shares their words."""
+    fig = _fig(1, 200)
+    doc = _doc([
+        _para(1, 150, "The draft model trick"),
+        fig,
+        _para(2, 320, "So: let a small draft model guess tokens, and the big model checks every token at once."),
+    ], captions=[_cap(fig.element_id, "Draft model checks", "A draft model proposes tokens.", ["Draft model"])])
+    links, _ = _links(doc, parse_settings)
+    assert links == {("p1:vector_figure:1", "p1:text:2", "related")}
+
+
+def test_same_section_paragraph_on_the_previous_page_is_a_candidate(parse_settings):
+    """Real run: a figure at the top of a page is explained at the end of the previous page."""
+    fig = _fig(1, 60, page=2)
+    explain = _para(1, 700, "Top-K keeps a fixed number of draft tokens; top-P keeps a fixed probability mass of "
+                            "draft tokens.", page=1)
+    far = _para(1, 600, "Quantization halves memory, and quantized weights use fewer bits per weight.", page=2)
+    for el in (fig, explain, far):
+        el.section_path = ["Sampling"]
+    doc = _doc([explain, fig, far],
+               captions=[_cap(fig.element_id, "Draft tokens kept", "Draft tokens kept by top-K and top-P.", [])])
+    links, _ = _links(doc, parse_settings)
+    assert links == {("p2:vector_figure:1", "p1:text:1", "related")}
 
 
 def test_unrelated_neighbours_leave_the_figure_unlinked(parse_settings):

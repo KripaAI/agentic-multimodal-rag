@@ -13,6 +13,7 @@ import hashlib
 import json
 import math
 import re
+import unicodedata
 from pathlib import Path
 from typing import Callable
 
@@ -33,12 +34,20 @@ _DEICTIC_ABOVE = re.compile(rf"\b(?:{_VISUAL}\s+above|(?:shown|illustrated|seen|
                             rf"(?:the\s+)?(?:previous|preceding)\s+{_VISUAL})", re.IGNORECASE)
 
 
+MIN_CANDIDATE_WORDS = 8  # shorter blocks are headings or labels, not discussion
+
+
 def _norm(text: str | None) -> str:
     return " ".join((text or "").split()).lower()
 
 
+def _fold(text: str) -> str:
+    """NFKC folds subscripts and compatibility forms: the PDF's q₁k₁ matches the model's q1k1."""
+    return unicodedata.normalize("NFKC", text).lower()
+
+
 def _words(text: str) -> set[str]:
-    return set(_WORD.findall(text.lower()))
+    return set(_WORD.findall(_fold(text)))
 
 
 # ---------------------------------------------------------------- label cross-check
@@ -142,13 +151,18 @@ def find_links(doc: LoadedDoc, embed: EmbedFn, cfg: Enrich) -> tuple[list[Link],
                       for t in found]
             continue
 
-        # 3. Candidates for the most related nearby paragraph, scored below in one embedding call.
+        # 3. Candidates for the most related nearby paragraph, scored below in one embedding call:
+        #    paragraphs within the window on the page, the paragraphs directly before and after,
+        #    and paragraphs of the same section on the same or an adjacent page. Headings are skipped.
         pos = order[target.element_id]
-        before = [t for t in discussion if order[t.element_id] < pos]
-        after = [t for t in discussion if order[t.element_id] > pos]
-        near = [t for t in discussion if t.page == target.page and
+        paragraphs = [t for t in discussion if len(t.text.split()) >= MIN_CANDIDATE_WORDS]
+        before = [t for t in paragraphs if order[t.element_id] < pos]
+        after = [t for t in paragraphs if order[t.element_id] > pos]
+        near = [t for t in paragraphs if t.page == target.page and
                 min(abs(t.bbox[1] - target.bbox[3]), abs(target.bbox[1] - t.bbox[3])) <= cfg.proximity_window_pt]
-        candidates = list({t.element_id: t for t in near + before[-1:] + after[:1]}.values())
+        section = [t for t in paragraphs if target.section_path and t.section_path == target.section_path
+                   and abs(t.page - target.page) <= 1]
+        candidates = list({t.element_id: t for t in near + before[-1:] + after[:1] + section}.values())
         if candidates and _target_text(target, doc):
             pending_related.append((target, candidates))
         else:
@@ -163,7 +177,8 @@ def find_links(doc: LoadedDoc, embed: EmbedFn, cfg: Enrich) -> tuple[list[Link],
             labels = _target_labels(target, doc)
 
             def score(t: Element) -> float:
-                share = sum(lbl.lower() in t.text.lower() for lbl in labels) / len(labels) if labels else 0.0
+                body = _fold(t.text)
+                share = sum(_fold(lbl) in body for lbl in labels) / len(labels) if labels else 0.0
                 return _cosine(tv, vectors[t.text]) + cfg.label_weight * share
 
             best = max(candidates, key=score)
