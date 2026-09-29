@@ -49,3 +49,16 @@ def test_bundle_datasets_use_the_mmrag_bundle_address():
     # mmrag-caption-<doc_id> addresses can get stuck on Kaggle after a failed create (Phase 5).
     meta = kaggle_job.dataset_metadata("someone", "abc")
     assert meta["id"] == "someone/mmrag-bundle-abc" and meta["title"] == "mmrag bundle abc"
+
+
+def test_the_cli_runs_in_utf8_mode(monkeypatch):
+    # On Windows the CLI crashed printing the job log ('charmap' codec) after downloading.
+    seen = {}
+
+    def run(cmd, **kw):
+        seen.update(kw)
+        return NS(returncode=0, stdout="ok", stderr="")
+
+    monkeypatch.setattr(kaggle_job.subprocess, "run", run)
+    kaggle_job._kaggle("kernels", "output", "u/k")
+    assert seen["env"]["PYTHONIOENCODING"] == "utf-8" and seen["env"]["PYTHONUTF8"] == "1"
