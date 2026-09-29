@@ -65,8 +65,12 @@ def _wait_until_ready(dataset: str, timeout_s: int = 300) -> None:
 
     deadline = time.monotonic() + timeout_s
     while time.monotonic() < deadline:
-        if "ready" in _kaggle("datasets", "status", dataset).stdout.lower():
-            return
+        try:
+            if "ready" in _kaggle("datasets", "status", dataset).stdout.lower():
+                return
+        except RuntimeError as e:
+            if "403" not in str(e):  # a brand-new dataset answers 403 until Kaggle has registered it
+                raise
         time.sleep(10)
     raise RuntimeError(f"dataset {dataset} not ready after {timeout_s}s")
 
