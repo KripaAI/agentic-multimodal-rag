@@ -62,6 +62,14 @@ agent:
   summary_model: gpt-5.4-mini       # table summaries; owner's pick from the Phase 3 comparison
   rounds_default: 3
   rounds_multi: 5
+  prompt_version: v1                # src/mmrag/agent/prompts/*_v1.md
+  tool_timeout_s: 30                # per tool call
+  max_parallel_tools: 6             # tool calls run at once in one round
+
+# US$ per 1M tokens, per model, for query_log.cost_usd. Owner fills these in from OpenAI's
+# pricing page; a model left out is logged with cost null (tokens are always logged).
+pricing: {}
+#  gpt-5.4-mini: {input_per_mtok: 0.0, output_per_mtok: 0.0}
 
 ui:
   page_dpi: 150

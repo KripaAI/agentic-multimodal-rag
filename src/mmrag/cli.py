@@ -271,6 +271,20 @@ def cmd_search_report(settings: Settings, args: argparse.Namespace) -> int:
     return 0 if passed / total >= 0.8 else 1
 
 
+# ---------------------------------------------------------------- ask (Phase 4)
+
+def cmd_ask(settings: Settings, args: argparse.Namespace) -> int:
+    """Answer one question with the agent; write the answer page; print its path, the thread
+    id (for follow-ups), cost, latency and the trace id."""
+    raise NotImplementedError
+
+
+def cmd_ask_batch(settings: Settings, args: argparse.Namespace) -> int:
+    """Answer every question in a YAML file with each model in --models; write each answer
+    page and a comparison page (answers side by side, cost, latency, validator results)."""
+    raise NotImplementedError
+
+
 # ---------------------------------------------------------------- caption (Phase 2)
 
 def _caption_dirs(settings: Settings, pdf: Path) -> tuple[str, Path]:
@@ -403,6 +417,13 @@ def main(argv: list[str] | None = None) -> int:
     search_parser.add_argument("query")
     search_parser.add_argument("--collection", choices=["all", "text", "figure", "table"], default="all")
     search_parser.add_argument("-k", type=int, default=5)
+    ask_parser = sub.add_parser("ask", help="answer a question with the agent (writes an HTML answer page)")
+    ask_parser.add_argument("question")
+    ask_parser.add_argument("--thread", help="continue an earlier conversation (thread id printed by ask)")
+    ask_parser.add_argument("--model", help="override agent.model for this question")
+    batch_parser = sub.add_parser("ask-batch", help="answer a question file, optionally with several models")
+    batch_parser.add_argument("questions", help="YAML file of questions")
+    batch_parser.add_argument("--models", help="comma-separated models to compare (default: agent.model)")
     report_parser = sub.add_parser("search-report", help="run the fixed retrieval test queries (Phase 3 gate)")
     report_parser.add_argument("--queries", default=str(PROJECT_ROOT / "eval" / "retrieval_queries.yaml"))
     caption_parser = sub.add_parser("caption", help="VLM figure captioning on Kaggle (Phase 2)")
@@ -439,6 +460,8 @@ def main(argv: list[str] | None = None) -> int:
         "ingest": {"parse": cmd_ingest_parse, "index": cmd_ingest_index,
                    "compare-summaries": cmd_compare_summaries}.get(getattr(args, "ingest_command", None)),
         "search": cmd_search,
+        "ask": cmd_ask,
+        "ask-batch": cmd_ask_batch,
         "search-report": cmd_search_report,
         "caption": cmd_caption,
     }

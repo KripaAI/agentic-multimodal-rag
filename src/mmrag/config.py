@@ -91,6 +91,14 @@ class Agent(_Section):
     summary_model: str | None
     rounds_default: int = Field(ge=1)
     rounds_multi: int = Field(ge=1)
+    prompt_version: str
+    tool_timeout_s: float = Field(gt=0)
+    max_parallel_tools: int = Field(ge=1)
+
+
+class ModelPrice(_Section):
+    input_per_mtok: float = Field(ge=0)  # US$ per 1M input tokens
+    output_per_mtok: float = Field(ge=0)  # US$ per 1M output tokens (includes reasoning tokens)
 
 
 class UI(_Section):
@@ -152,6 +160,7 @@ class Settings(_Section):
     observability: Observability
     retention: Retention
     eval: Eval
+    pricing: dict[str, ModelPrice] = {}
     secrets: Secrets
 
     def resolve(self, path: Path) -> Path:
