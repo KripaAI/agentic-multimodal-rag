@@ -9,7 +9,7 @@ Two forms of every block:
 
 from __future__ import annotations
 
-from typing import Annotated, Literal
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -48,7 +48,9 @@ class TableBlock(_Model):
     citation: Citation
 
 
-Block = Annotated[TextBlock | ImageBlock | ChartBlock | TableBlock, Field(discriminator="type")]
+# A plain union (not `discriminator=`): OpenAI strict schemas allow anyOf but not oneOf. The
+# literal `type` on each block still picks the right model.
+Block = TextBlock | ImageBlock | ChartBlock | TableBlock
 
 
 class Answer(_Model):

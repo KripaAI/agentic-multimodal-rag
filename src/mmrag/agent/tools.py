@@ -298,11 +298,15 @@ _DESCRIPTIONS = {
                   "Set view_image to look at the image.",
     "get_table": "Every row of one table, exactly as printed. Use before quoting or charting its numbers.",
     "view_page": "Look at a whole PDF page as an image, when the text is not enough. Costs more; use sparingly.",
-    "compute": "Exact arithmetic on numbers from the evidence. Each ref gives its value and the id it came from. "
-               "The result gets an id you can use in charts.",
-    "make_chart": "Draw a bar, pie or line chart from numbers in the evidence. Every value needs its source id in "
-                  "value_refs (key '<series name>:<label>'). Returns a chart_id to put in the answer, or why it "
-                  "was rejected.",
+    "compute": "Exact arithmetic on numbers from the evidence. Name each input and give its value and the id it "
+               "came from, e.g. expression 'a / b' with refs {\"a\": {\"value\": 800, \"source\": \"<id>\"}, "
+               "\"b\": {\"value\": 160, \"source\": \"<id>\"}}. The result gets an id you can use in charts.",
+    "make_chart": "Draw a bar, pie or line chart from numbers in the evidence. `labels` are the categories on the "
+                  "x axis; each series has exactly one value per label and one unit (never mix units such as KB "
+                  "and GB in one chart: make one chart per unit). Every value needs its source in value_refs: key "
+                  "'<series name>:<label>', value an id exactly as a tool returned it (for example the table's "
+                  "element id, or a compute id). Returns a chart_id to put in the answer, or why it was rejected; "
+                  "only cite a chart_id that was returned.",
 }
 
 TOOL_SPECS: list[dict] = [

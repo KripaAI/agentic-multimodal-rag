@@ -14,6 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol, TypeVar
 
+from openai.lib._parsing._completions import type_to_response_format_param
 from pydantic import BaseModel
 
 from mmrag.llm import REASONING_PREFIXES
@@ -56,12 +57,18 @@ def _wire(messages: list[dict]) -> list[dict]:
 class OpenAILLM:
     def __init__(self, client, model: str, effort: str | None = None, max_tokens: int = 4000):
         self.client, self.model, self.max_tokens = client, model, max_tokens
-        self._extra = {"reasoning_effort": effort or "low"} if model.startswith(REASONING_PREFIXES) else {"temperature": 0.1}
+        self.reasoning = model.startswith(REASONING_PREFIXES)
+        self._extra = {"reasoning_effort": effort or "low"} if self.reasoning else {"temperature": 0.1}
+
+    def _options(self, tools: list[dict] | None) -> dict:
+        # Chat Completions accepts function tools on gpt-5.x only with reasoning_effort "none"
+        # (tools with reasoning need the Responses API).
+        return {**self._extra, "reasoning_effort": "none"} if tools and self.reasoning else self._extra
 
     def chat(self, messages: list[dict], tools: list[dict] | None) -> LLMReply:
         kwargs = {"tools": tools, "parallel_tool_calls": True} if tools else {}
         r = self.client.chat.completions.create(model=self.model, messages=_wire(messages),
-                                                max_completion_tokens=self.max_tokens, **kwargs, **self._extra)
+                                                max_completion_tokens=self.max_tokens, **kwargs, **self._options(tools))
         msg = r.choices[0].message
         calls = [{"id": c.id, "name": c.function.name, "arguments": json.loads(c.function.arguments or "{}")}
                  for c in (msg.tool_calls or [])]
@@ -69,11 +76,15 @@ class OpenAILLM:
                         output_tokens=r.usage.completion_tokens)
 
     def structured(self, messages: list[dict], schema: type[T], tools: list[dict] | None = None) -> tuple[T, LLMReply]:
+        # `create` rather than `parse`: parse() refuses non-strict tools, and the tools must be
+        # declared because the history holds tool calls. The schema itself is still strict.
         kwargs = {"tools": tools, "tool_choice": "none"} if tools else {}
-        r = self.client.chat.completions.parse(model=self.model, messages=_wire(messages), response_format=schema,
-                                               max_completion_tokens=self.max_tokens, **kwargs, **self._extra)
+        r = self.client.chat.completions.create(model=self.model, messages=_wire(messages),
+                                                response_format=type_to_response_format_param(schema),
+                                                max_completion_tokens=self.max_tokens, **kwargs, **self._options(tools))
         msg = r.choices[0].message
-        if msg.parsed is None:
-            raise ValueError(f"the model returned no {schema.__name__}: {msg.refusal or msg.content!r}")
-        return msg.parsed, LLMReply(content=msg.content, input_tokens=r.usage.prompt_tokens,
-                                    output_tokens=r.usage.completion_tokens)
+        if not msg.content:
+            raise ValueError(f"the model returned no {schema.__name__}: {getattr(msg, 'refusal', None)!r}")
+        return schema.model_validate_json(msg.content), LLMReply(content=msg.content,
+                                                                 input_tokens=r.usage.prompt_tokens,
+                                                                 output_tokens=r.usage.completion_tokens)

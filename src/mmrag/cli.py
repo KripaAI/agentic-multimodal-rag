@@ -283,9 +283,9 @@ def cmd_ask(settings: Settings, args: argparse.Namespace) -> int:
     page = write_answer_page(args.question, run, settings)
     cost = f"${run.cost_usd:.4f}" if run.cost_usd is not None else "cost n/a (add the model to `pricing`)"
     print(f"Answer page: {page}")
-    print(f"thread {run.thread_id} (continue with --thread {run.thread_id}) · {run.model} · {run.rounds} rounds · "
-          f"{len(run.tool_calls)} tool calls · {cost} · {run.latency_ms / 1000:.1f} s · validator "
-          f"{run.validator_result} · trace {run.trace_id}")
+    print(f"thread {run.thread_id} (continue with --thread {run.thread_id}), {run.model}, {run.rounds} rounds, "
+          f"{len(run.tool_calls)} tool calls, {cost}, {run.latency_ms / 1000:.1f} s, validator "
+          f"{run.validator_result}, trace {run.trace_id}")
     for n in run.answer.notices:
         print(f"  notice: {n}")
     return 0
