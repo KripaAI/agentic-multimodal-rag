@@ -20,7 +20,8 @@ JOB_SCRIPT = PROJECT_ROOT / "gpu_job" / "caption" / "caption.py"
 
 
 def dataset_slug(doc_id: str) -> str:
-    return f"mmrag-caption-{doc_id}"
+    # Not "mmrag-caption-...": after a failed create, Kaggle kept those addresses reserved but empty.
+    return f"mmrag-bundle-{doc_id}"
 
 
 def kernel_slug(doc_id: str) -> str:
@@ -28,7 +29,7 @@ def kernel_slug(doc_id: str) -> str:
 
 
 def dataset_metadata(user: str, doc_id: str) -> dict:
-    return {"title": f"mmrag caption bundle {doc_id}", "id": f"{user}/{dataset_slug(doc_id)}",
+    return {"title": f"mmrag bundle {doc_id}", "id": f"{user}/{dataset_slug(doc_id)}",
             "licenses": [{"name": "other"}]}
 
 
@@ -54,7 +55,8 @@ def kernel_metadata(user: str, doc_id: str) -> dict:
 def _kaggle(*args: str) -> subprocess.CompletedProcess:
     r = subprocess.run([sys.executable, "-m", "kaggle", *args], capture_output=True, text=True,
                        encoding="utf-8", errors="replace")
-    if r.returncode != 0:
+    # The CLI exits 0 on some failures and only prints them (e.g. "Dataset creation error: ...").
+    if r.returncode != 0 or "creation error" in r.stdout.lower():
         raise RuntimeError(f"kaggle {' '.join(args)} failed:\n{r.stdout}{r.stderr}")
     return r
 

@@ -35,3 +35,17 @@ def test_other_errors_are_not_swallowed(monkeypatch):
     monkeypatch.setattr("time.sleep", lambda s: None)
     with pytest.raises(RuntimeError, match="401"):
         kaggle_job._wait_until_ready("u/d")
+
+
+def test_an_error_printed_with_exit_code_0_is_still_an_error(monkeypatch):
+    # `kaggle datasets create` prints "Dataset creation error: ..." and exits 0.
+    out = NS(returncode=0, stdout="Upload successful\nDataset creation error: title already in use", stderr="")
+    monkeypatch.setattr(kaggle_job.subprocess, "run", lambda *a, **k: out)
+    with pytest.raises(RuntimeError, match="creation error"):
+        kaggle_job._kaggle("datasets", "create", "-p", "x")
+
+
+def test_bundle_datasets_use_the_mmrag_bundle_address():
+    # mmrag-caption-<doc_id> addresses can get stuck on Kaggle after a failed create (Phase 5).
+    meta = kaggle_job.dataset_metadata("someone", "abc")
+    assert meta["id"] == "someone/mmrag-bundle-abc" and meta["title"] == "mmrag bundle abc"
