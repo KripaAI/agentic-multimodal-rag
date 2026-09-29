@@ -60,6 +60,8 @@ class Caption(_Section):
 class Enrich(_Section):
     label_overlap_min: float = Field(ge=0, le=1)
     proximity_window_pt: float = Field(gt=0)
+    link_min_score: float = Field(ge=0)
+    label_weight: float = Field(ge=0)
 
 
 class Chunk(_Section):

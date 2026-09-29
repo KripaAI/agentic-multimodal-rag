@@ -13,7 +13,7 @@ from typing import Callable
 
 from opentelemetry import trace
 
-from mmrag.config import ConfigError, Settings, get_settings
+from mmrag.config import PROJECT_ROOT, ConfigError, Settings, get_settings
 from mmrag.obs import get_logger, get_tracer, init_telemetry, shutdown_telemetry
 
 _log = get_logger("mmrag.cli")
@@ -199,6 +199,78 @@ def cmd_ingest_parse(settings: Settings, args: argparse.Namespace) -> int:
 
 # ---------------------------------------------------------------- main
 
+# ---------------------------------------------------------------- index and search (Phase 3)
+
+def cmd_ingest_index(settings: Settings, args: argparse.Namespace) -> int:
+    """Enrich, chunk, embed and write one parsed (and captioned) PDF to PostgreSQL."""
+    from mmrag.index.pipeline import index_document
+
+    try:
+        (pdf,) = _pdf_paths(settings, [args.pdf])
+        report = index_document(pdf, settings)
+    except FileNotFoundError as e:
+        print(e)
+        return 1
+    methods = {m: sum(lk.method == m for lk in report.links) for m in ("explicit", "deictic", "related")}
+    review = sum(c.status != "ok" for c in report.doc.captions.values())
+    print(f"{report.doc.source_file}: {report.result}")
+    print(f"  search documents: {report.counts['text']} text, {report.counts['figure']} figure, "
+          f"{report.counts['table']} table")
+    print(f"  links: {methods['explicit']} explicit, {methods['deictic']} deictic, {methods['related']} related; "
+          f"{len(report.unlinked)} unlinked")
+    print(f"  captions needing review after the label check: {review}")
+    print(f"  link report: {report.link_report}")
+    return 0
+
+
+def cmd_compare_summaries(settings: Settings, args: argparse.Namespace) -> int:
+    """Summarize every table with several models, side by side, for the owner to choose."""
+    from mmrag.index.document import load_document
+    from mmrag.index.reports import write_summary_comparison
+    from mmrag.llm import complete, get_client
+
+    (pdf,) = _pdf_paths(settings, [args.pdf])
+    doc = load_document(pdf, settings)
+    client = get_client(settings)
+    from mmrag.ingest.enrich import _SUMMARY_PROMPT
+
+    results = {}
+    for model in [m.strip() for m in args.models.split(",")]:
+        results[model] = {}
+        for eid, t in doc.tables.items():
+            prompt = _SUMMARY_PROMPT.format(title=t.title or "(none)", columns=" | ".join(t.columns),
+                                            rows="\n".join(" | ".join(r) for r in t.rows[:25]))
+            results[model][eid] = complete(client, model, prompt)
+        print(f"  {model}: {len(doc.tables)} tables summarized")
+    out = settings.resolve(settings.paths.data_dir) / "elements" / doc.doc_id / "summary_comparison.html"
+    print(f"Comparison page: {write_summary_comparison(doc, results, out)}")
+    return 0
+
+
+def cmd_search(settings: Settings, args: argparse.Namespace) -> int:
+    from mmrag.retrieval.hybrid import COLLECTIONS, search
+
+    for coll in (COLLECTIONS if args.collection == "all" else [args.collection]):
+        print(f"\n== {coll}")
+        for n, h in enumerate(search(settings, args.query, coll, args.k), 1):
+            pages = sorted({loc["page"] for loc in h.locations})
+            ranks = f"sem {h.semantic_rank or '-'} / kw {h.keyword_rank or '-'}"
+            print(f"{n:>2}. {h.score:.4f} ({ranks}) {h.source_file} p{','.join(map(str, pages))}  "
+                  f"{' '.join(h.dense_text.split())[:110]}")
+            for r in h.related:
+                print(f"      related {r['type']} p{r['page']} ({r['method']}): {' '.join((r['title'] or '').split())[:80]}")
+    return 0
+
+
+def cmd_search_report(settings: Settings, args: argparse.Namespace) -> int:
+    from mmrag.retrieval.report import run_retrieval_report
+
+    out, passed, total = run_retrieval_report(settings, Path(args.queries))
+    print(f"Expected result in the top 5 for {passed}/{total} queries ({passed / total:.0%}; gate: 80%)")
+    print(f"Report: {out}")
+    return 0 if passed / total >= 0.8 else 1
+
+
 # ---------------------------------------------------------------- caption (Phase 2)
 
 def _caption_dirs(settings: Settings, pdf: Path) -> tuple[str, Path]:
@@ -322,6 +394,17 @@ def main(argv: list[str] | None = None) -> int:
     ingest_sub = ingest_parser.add_subparsers(dest="ingest_command", required=True)
     parse_parser = ingest_sub.add_parser("parse", help="parse one PDF and build its review sheet")
     parse_parser.add_argument("pdf", help="PDF file name in paths.pdf_dir, or a path")
+    index_parser = ingest_sub.add_parser("index", help="enrich, chunk, embed and write one PDF to the database")
+    index_parser.add_argument("pdf", help="PDF file name in paths.pdf_dir, or a path")
+    cmp_parser = ingest_sub.add_parser("compare-summaries", help="table summaries from several models, side by side")
+    cmp_parser.add_argument("pdf", help="PDF file name in paths.pdf_dir, or a path")
+    cmp_parser.add_argument("--models", default="gpt-4o-mini,gpt-5.4-mini,gpt-5.4-nano")
+    search_parser = sub.add_parser("search", help="hybrid search over the indexed documents")
+    search_parser.add_argument("query")
+    search_parser.add_argument("--collection", choices=["all", "text", "figure", "table"], default="all")
+    search_parser.add_argument("-k", type=int, default=5)
+    report_parser = sub.add_parser("search-report", help="run the fixed retrieval test queries (Phase 3 gate)")
+    report_parser.add_argument("--queries", default=str(PROJECT_ROOT / "eval" / "retrieval_queries.yaml"))
     caption_parser = sub.add_parser("caption", help="VLM figure captioning on Kaggle (Phase 2)")
     caption_sub = caption_parser.add_subparsers(dest="caption_command", required=True)
     c_bundle = caption_sub.add_parser("bundle", help="package figures and context for the GPU job")
@@ -353,7 +436,10 @@ def main(argv: list[str] | None = None) -> int:
         "models": cmd_models,
         "db": {"migrate": cmd_db_migrate}.get(getattr(args, "db_command", None)),
         "profile": cmd_profile,
-        "ingest": {"parse": cmd_ingest_parse}.get(getattr(args, "ingest_command", None)),
+        "ingest": {"parse": cmd_ingest_parse, "index": cmd_ingest_index,
+                   "compare-summaries": cmd_compare_summaries}.get(getattr(args, "ingest_command", None)),
+        "search": cmd_search,
+        "search-report": cmd_search_report,
         "caption": cmd_caption,
     }
     try:

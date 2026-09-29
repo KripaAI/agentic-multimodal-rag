@@ -156,8 +156,8 @@ No other citation fields are ever accepted from the model.
 |---|---|
 | `validate_captions()` | Re-validates every caption against the schema on the laptop. Invalid or `confidence: low` → `needs_review`. |
 | `cross_check_labels()` | For vector figures: the share of the VLM's `visible_text` tokens found in the PDF text inside the figure bbox. Below τ → `needs_review`. |
-| `link_figures()` | For each figure, the first rule that matches wins: (1) explicit "Figure/Fig./Table N"; (2) deictic phrase ("below/above/shown here") pointing at the nearest figure in that direction; (3) proximity: the preceding text block on the same page, or the nearest block within `proximity_window_pt`. Writes `figure_links` with the `method` used. |
-| `summarize_tables()` | Calls `agent.summary_model` for a 2-sentence summary of each table's title, headers and first rows. Cached by table `content_hash`. |
+| `link_elements()` | For each figure **and table**, the first rule that produces a link wins: (1) explicit "Figure/Fig./Table N"; (2) deictic phrase ("below/above/shown here") pointing at the nearest figure or table in that direction; (3) **most related nearby paragraph**: candidates within `proximity_window_pt` on the same page plus the paragraphs directly before and after, scored `cosine(embedding) + label_weight × label share`; the best one at or above `link_min_score` is linked, else the item is reported unlinked. Writes `element_links` with `method` and `score`. |
+| `summarize_tables()` | Calls `agent.summary_model` for a 2-sentence summary of each table's title, headers and rows. Cached by (table `content_hash`, model). A comparison mode runs several models side by side for the owner to choose. |
 
 ### 3.6 `index/chunk.py`
 
@@ -258,13 +258,14 @@ All embeddings are computed **before** step 2, so the transaction holds no netwo
 | `numeric_columns` | text[] | |
 | `title`, `summary` | text | |
 
-**`figure_links`**
+**`element_links`** (was `figure_links`; tables are linked too since v0.7)
 
 | Column | Type | Notes |
 |---|---|---|
-| `figure_id` | text | FK → elements (cascade) |
+| `target_id` | text | the figure or table; FK → elements (cascade) |
 | `text_element_id` | text | FK → elements (cascade) |
-| `method` | text | `explicit` · `deictic` · `proximity` |
+| `method` | text | `explicit` · `deictic` · `related` |
+| `score` | real | 1.0 for explicit and deictic; the similarity score for `related` |
 
 **`search_chunks`**
 
@@ -377,7 +378,7 @@ Primary key: (`run_id`, `question_id`, `metric`).
 | HNSW on `search_chunks.embedding` (cosine), **one partial index per `collection`** | Semantic search that still returns *k* results after the collection filter |
 | GIN on `tsv_english` and on `tsv_simple` | Keyword search |
 | B-tree on (`collection`, `doc_id`) and on `elements(doc_id, page)` | Filters and page lookups |
-| B-tree on `figure_links(figure_id)` | Figure → text lookups |
+| B-tree on `element_links(target_id)` and `element_links(text_element_id)` | Links in both directions (related items, §5.4) |
 | Unique on `users(email)` and on `sessions(token_hash)` | Sign-in and session lookups |
 | B-tree on `query_log(user_id, created_at)` | Per-user limits and history |
 | B-tree on `auth_events(email_attempted, created_at)` and `auth_events(ip, created_at)` | Lockout and per-IP throttling |
@@ -440,7 +441,8 @@ The whole request runs inside **one OpenTelemetry trace** (§5.9); each step bel
    - **rrf:** a full outer join of both lists on `chunk_id`. Score = Σ 1/(`rrf_k` + rank), where a missing rank contributes 0. Ordered by score, limited to *k*.
 3. **Location aggregation:** for each of the top *k* chunks, a lateral subquery collects its elements into **one JSON array** of `{element_id, page, bbox}`. The array is ordered by each element's position in `element_ids` (reading order), and `source_file` comes from `documents`. Each chunk stays **exactly one row**. A plain join on `element_id = ANY(element_ids)` would return one row per element, duplicating chunks and breaking the *k* limit.
 4. If `search.rerank` is on, the top 20 are re-scored with the local cross-encoder before cutting to *k*.
-5. All values are passed as SQL parameters, never string-built.
+5. **Related items:** one follow-up query on `element_links` (both directions) for the elements of the top *k* chunks; each result gets `related: [{element_id, type, page, title}]` (a figure's short caption, a table's title, a paragraph's first words).
+6. All values are passed as SQL parameters, never string-built.
 
 ### 5.5 `charts/engine.py`
 

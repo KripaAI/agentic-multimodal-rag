@@ -1,0 +1,94 @@
+# Phase 3 retrieval test queries (plan Phase 3 task 9). Written before looking at search results.
+# A query passes when a top-5 result in `collection` covers one of the `expect` elements.
+# kinds: conceptual (text) · visual (figure) · table (worded, not cell values) · exact_term (acronyms/names)
+
+- id: v1
+  kind: visual
+  source: Transformers-in-Practice-Illustrated.pdf
+  collection: figure
+  query: What are the steps a language model repeats to generate text?
+  expect: [p3:vector_figure:2]
+- id: v2
+  kind: visual
+  source: Transformers-in-Practice-Illustrated.pdf
+  collection: figure
+  query: How does speculative decoding use a small draft model and a big target model?
+  expect: [p29:vector_figure:2]
+- id: v3
+  kind: visual
+  source: Transformers-in-Practice-Illustrated.pdf
+  collection: figure
+  query: Show the parts of one transformer block
+  expect: [p22:vector_figure:1]
+- id: v4
+  kind: visual
+  source: Transformers-in-Practice-Illustrated.pdf
+  collection: figure
+  query: Diagram of the retrieval-augmented generation pipeline
+  expect: [p10:vector_figure:2]
+- id: v5
+  kind: visual
+  source: Transformers-in-Practice-Illustrated.pdf
+  collection: figure
+  query: How does temperature change the shape of the probability distribution?
+  expect: [p5:vector_figure:2]
+- id: c1
+  kind: conceptual
+  source: Transformers-in-Practice-Illustrated.pdf
+  collection: text
+  query: Why does one wrong digit make the model keep producing a confident wrong answer?
+  expect: [p8:text:3, p8:text:4, p8:text:5, p8:text:6]
+- id: c2
+  kind: conceptual
+  source: Transformers-in-Practice-Illustrated.pdf
+  collection: text
+  query: Why store keys and values instead of recomputing attention for earlier tokens?
+  expect: [p27:text:15, p27:text:16, p27:text:17, p28:text:1]
+- id: c3
+  kind: conceptual
+  source: Transformers-in-Practice-Illustrated.pdf
+  collection: text
+  query: What does lowering the temperature do to sampling?
+  expect: [p5:text:7, p5:text:8, p5:text:9]
+- id: c4
+  kind: conceptual
+  source: Transformers-in-Practice-Illustrated.pdf
+  collection: text
+  query: Why do models pay less attention to documents in the middle of a long context?
+  expect: [p11:text:6]
+- id: t1
+  kind: table
+  source: Transformers-in-Practice-Illustrated.pdf
+  collection: table
+  query: Which table lists the size and shape of the Qwen3-14B model?
+  expect: [p14:table:1]
+- id: t2
+  kind: table
+  source: Transformers-in-Practice-Illustrated.pdf
+  collection: table
+  query: How much memory does the KV cache need with fewer key-value heads?
+  expect: [p19:table:1]
+- id: t3
+  kind: table
+  source: Transformers-in-Practice-Illustrated.pdf
+  collection: table
+  query: Which parts of a model are safe to quantize and which should stay in high precision?
+  expect: [p27:table:1]
+- id: e1
+  kind: exact_term
+  source: Transformers-in-Practice-Illustrated.pdf
+  collection: text
+  query: RoPE
+  expect: [p20:text:17, p20:text:18, p21:text:1, p21:text:9]
+- id: e2
+  kind: exact_term
+  source: Transformers-in-Practice-Illustrated.pdf
+  collection: text
+  query: GQA
+  expect: [p19:text:3, p19:text:6]
+- id: e3
+  kind: exact_term
+  source: Transformers-in-Practice-Illustrated.pdf
+  collection: text
+  query: vLLM
+  expect: [p10:text:6, p30:text:10]
