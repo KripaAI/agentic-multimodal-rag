@@ -129,3 +129,53 @@ def test_a_new_thread_starts_fresh(parse_settings, tmp_path):
     assert state["validation"]["ok"] and not state["repaired"]
     first_chat = next(m for kind, m in llm.calls if kind == "chat")
     assert "How does generation work?" not in " ".join(str(m.get("content")) for m in first_chat)
+
+
+def test_a_quantitative_answer_without_a_chart_gets_one_nudge(parse_settings, tmp_path):
+    llm = FakeLLM(qtype="quantitative", chats=[_call(1)], answers=[_cited("d:text:1")])
+    _, state = _run(llm, parse_settings, tmp_path)
+    chats = [m for kind, m in llm.calls if kind == "chat"]
+    assert len(chats) == 3  # tools, "enough", nudged once, "enough" again -> compose
+    assert "make_chart" in chats[2][-1]["content"] and chats[2][-1]["role"] == "user"
+    assert state["validation"]["ok"] and state["round"] == 1
+
+
+def test_no_chart_nudge_for_other_questions_or_at_the_round_limit(parse_settings, tmp_path):
+    llm = FakeLLM(qtype="conceptual", chats=[_call(1)], answers=[_cited("d:text:1")])
+    _run(llm, parse_settings, tmp_path)
+    assert sum(kind == "chat" for kind, _ in llm.calls) == 2
+    llm = FakeLLM(qtype="quantitative", chats=[_call(n) for n in range(1, 10)], answers=[_cited("d:text:1")])
+    _run(llm, parse_settings, tmp_path, thread="t2")
+    assert not any("make_chart" in str(m[-1].get("content")) for kind, m in llm.calls if kind == "chat")
+
+
+def test_a_follow_up_sees_earlier_answers_but_not_their_tool_results(parse_settings, tmp_path):
+    llm = FakeLLM(chats=[_call(1)], answers=[_cited("d:text:1"), _cited("d:text:1")])
+    app, _ = _run(llm, parse_settings, tmp_path, question="How does generation work?")
+    llm.calls.clear()
+    llm.chats.append(_call(2))
+    _run(llm, parse_settings, tmp_path, question="And the second step?", app=app)
+    first_chat = next(m for kind, m in llm.calls if kind == "chat")
+    assert not any(m.get("role") == "tool" or m.get("tool_calls") for m in first_chat)  # turn 1 tool traffic pruned
+    earlier = [m for m in first_chat if m.get("role") == "assistant"]
+    assert "An answer." in earlier[0]["content"] and "d:text:1" in earlier[0]["content"]  # cited ids stay usable
+    compose_msgs = next(m for kind, m in llm.calls if kind == "Answer")
+    assert [m["tool_call_id"] for m in compose_msgs if m.get("role") == "tool"] == ["c2"]  # this turn's tools kept
+
+
+def test_compose_is_told_which_charts_were_accepted(parse_settings, tmp_path):
+    from mmrag.agent.graph import _compose_messages
+
+    class Deps:
+        def prompt(self, name):
+            return (tools_dir() / f"{name}_v1.md").read_text(encoding="utf-8")
+
+    state = {"messages": [{"role": "user", "content": "Chart it"}], "round": 3, "round_limit": 3,
+             "charts": {"chart-abc": {"ok": True, "title": "KV per token"}, "chart-bad": {"ok": False, "title": "x"}}}
+    last = _compose_messages(state, Deps())[-1]["content"]
+    assert "chart-abc" in last and "KV per token" in last and "chart-bad" not in last
+
+
+def tools_dir():
+    from mmrag.agent.graph import PROMPTS_DIR
+    return PROMPTS_DIR

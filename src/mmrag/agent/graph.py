@@ -1,6 +1,7 @@
 """The agent as a LangGraph state graph (D3, spec §7.2, LLD §5.2).
 
     START → plan → agent ⇄ tools → compose → validate ─ok──────────────→ finish → END
+                    ⇅ chart_nudge (once, quantitative)
                                                ├─fail─→ repair → validate
                                                └─fail after repair → give_up → finish
 
@@ -35,8 +36,11 @@ from mmrag.config import PROJECT_ROOT, Settings
 from mmrag.obs import get_tracer
 
 PROMPTS_DIR = PROJECT_ROOT / "src" / "mmrag" / "agent" / "prompts"
-LIMIT_NOTE = ("You reached the round limit for this question. Answer with what the evidence supports, and say "
-              "clearly in the text and in `missing` what could not be found.")
+CHART_NUDGE = ("This is a quantitative question and no chart has been made yet. If the evidence has two or more "
+               "comparable numbers with the same unit, fetch their source with get_table or get_figure if you "
+               "have not, then call make_chart. If it does not, reply without calling tools.")
+LIMIT_NOTE = ("You reached the round limit for this question. Answer with what the evidence supports. If some "
+              "part of the question could not be answered, say so in the text and in `missing`.")
 
 
 class PlanOut(BaseModel):
@@ -83,6 +87,16 @@ def _charts_out(charts: dict[str, ChartResult]) -> dict:
     return {cid: {**asdict(c), "png_path": str(c.png_path) if c.png_path else None} for cid, c in charts.items()}
 
 
+def _conversation(state: AgentState) -> list[dict]:
+    """The messages the model sees: earlier questions and answers of the thread, without their
+    tool calls, tool results and page images (the ledger still holds that evidence), plus
+    everything of the current question."""
+    msgs, start = state["messages"], state.get("turn_start", 0)
+    earlier = [m for m in msgs[:start]
+               if m.get("role") != "tool" and not m.get("tool_calls") and not isinstance(m.get("content"), list)]
+    return earlier + msgs[start:]
+
+
 def _answered(messages: list[dict]) -> list[dict]:
     """Close any tool calls left without a result (OpenAI rejects them)."""
     done = {m["tool_call_id"] for m in messages if m.get("role") == "tool"}
@@ -109,7 +123,7 @@ def plan(state: AgentState, runtime: Runtime[AgentDeps]) -> dict:
     """Classify the question and set the round limit (3, or 5 for multi-part)."""
     deps = runtime.context
     out, reply = deps.llm.structured([_system(deps), {"role": "system", "content": deps.prompt("plan")},
-                                      *state["messages"]], PlanOut)
+                                      *_conversation(state)], PlanOut)
     a = deps.settings.agent
     return {"qtype": out.qtype, "round_limit": a.rounds_multi if out.qtype == "multi_part" else a.rounds_default,
             **_usage(state, reply)}
@@ -119,7 +133,7 @@ def plan(state: AgentState, runtime: Runtime[AgentDeps]) -> dict:
 def agent(state: AgentState, runtime: Runtime[AgentDeps]) -> dict:
     """The next tool calls (possibly several at once), or none when the evidence is enough."""
     deps = runtime.context
-    reply = deps.llm.chat([_system(deps), *state["messages"]], TOOL_SPECS)
+    reply = deps.llm.chat([_system(deps), *_conversation(state)], TOOL_SPECS)
     update = _usage(state, reply)
     if reply.tool_calls:
         update["messages"] = [{"role": "assistant", "content": reply.content, "tool_calls": [
@@ -155,7 +169,17 @@ def tools(state: AgentState, runtime: Runtime[AgentDeps]) -> dict:
 def _compose_messages(state: AgentState, deps: AgentDeps) -> list[dict]:
     at_limit = state.get("round", 0) >= state.get("round_limit", 1)
     instructions = deps.prompt("compose").replace("{limit_note}", LIMIT_NOTE if at_limit else "")
-    return [_system(deps), *_answered(state["messages"]), {"role": "user", "content": instructions}]
+    accepted = [f"- {cid}: {c.get('title', '')}" for cid, c in (state.get("charts") or {}).items() if c.get("ok")]
+    if accepted:
+        instructions += ("\n\nCharts accepted for this question (include each relevant one as a chart block):\n"
+                         + "\n".join(accepted))
+    return [_system(deps), *_answered(_conversation(state)), {"role": "user", "content": instructions}]
+
+
+@_traced("agent.chart_nudge")
+def chart_nudge(state: AgentState, runtime: Runtime[AgentDeps]) -> dict:
+    """A quantitative question is about to be answered without a chart: ask once for one."""
+    return {"messages": [{"role": "user", "content": CHART_NUDGE}], "chart_nudged": True}
 
 
 @_traced("agent.compose")
@@ -203,16 +227,26 @@ def finish(state: AgentState, runtime: Runtime[AgentDeps]) -> dict:
     text = "\n\n".join(b.markdown for b in answer.blocks if b.type == "text")
     shown = [f"{b.type} {getattr(b, 'element_id', None) or getattr(b, 'chart_id', '')}"
              for b in answer.blocks if b.type != "text"]
-    return {"messages": [{"role": "assistant", "content": text + (f"\n\n(Shown: {', '.join(shown)})" if shown else "")}]}
+    # Follow-ups no longer see this turn's tool results, so keep the cited ids (still in the ledger).
+    cited = sorted({c.id for b in answer.blocks if b.type == "text" for c in b.citations}
+                   | {b.citation.id for b in answer.blocks if b.type in ("image", "table")})
+    notes = ([f"Shown: {', '.join(shown)}"] if shown else []) + ([f"Cited: {', '.join(cited)}"] if cited else [])
+    return {"messages": [{"role": "assistant", "content": text + "".join(f"\n\n({n})" for n in notes)}]}
 
 
 # ---------------------------------------------------------------- edges
 
-def after_agent(state: AgentState) -> Literal["tools", "compose"]:
-    """tools while the model asks for tools and rounds remain; otherwise compose."""
+def after_agent(state: AgentState) -> Literal["tools", "chart_nudge", "compose"]:
+    """tools while the model asks for tools and rounds remain; one chart nudge for a quantitative
+    question with no chart yet; otherwise compose."""
     last = state["messages"][-1]
     wants_tools = last.get("role") == "assistant" and bool(last.get("tool_calls"))
-    return "tools" if wants_tools and state.get("round", 0) < state.get("round_limit", 1) else "compose"
+    rounds_left = state.get("round", 0) < state.get("round_limit", 1)
+    if wants_tools:
+        return "tools" if rounds_left else "compose"
+    if state.get("qtype") == "quantitative" and not state.get("charts") and not state.get("chart_nudged")             and rounds_left:
+        return "chart_nudge"
+    return "compose"
 
 
 def after_tools(state: AgentState) -> Literal["agent", "compose"]:
@@ -231,12 +265,14 @@ def build_graph(settings: Settings, checkpointer=None):
     """Compile the StateGraph with the nodes and edges above and the given checkpointer."""
     g = StateGraph(AgentState, context_schema=AgentDeps)
     for name, fn in [("plan", plan), ("agent", agent), ("tools", tools), ("compose", compose),
-                     ("validate", validate_node), ("repair", repair), ("give_up", give_up), ("finish", finish)]:
+                     ("validate", validate_node), ("repair", repair), ("give_up", give_up), ("finish", finish),
+                     ("chart_nudge", chart_nudge)]:
         g.add_node(name, fn)
     g.add_edge(START, "plan")
     g.add_edge("plan", "agent")
     g.add_conditional_edges("agent", after_agent)
     g.add_conditional_edges("tools", after_tools)
+    g.add_edge("chart_nudge", "agent")
     g.add_edge("compose", "validate")
     g.add_conditional_edges("validate", after_validate)
     g.add_edge("repair", "validate")
@@ -247,10 +283,12 @@ def build_graph(settings: Settings, checkpointer=None):
 
 def answer_question(app, deps: AgentDeps, question: str, thread_id: str) -> AgentState:
     """Run one question in a thread; per-question fields are reset, messages and ledger carry over."""
+    config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 60}
+    earlier = app.get_state(config).values.get("messages", [])
     start = {"messages": [{"role": "user", "content": question}], "question": question, "round": 0,
-             "answer": None, "validation": None, "repaired": False, "notices": [], "tool_log": [],
-             "charts": {}, "tokens_in": 0, "tokens_out": 0}
-    return app.invoke(start, {"configurable": {"thread_id": thread_id}, "recursion_limit": 60}, context=deps)
+             "turn_start": len(earlier), "answer": None, "validation": None, "repaired": False, "notices": [],
+             "tool_log": [], "charts": {}, "chart_nudged": False, "tokens_in": 0, "tokens_out": 0}
+    return app.invoke(start, config, context=deps)
 
 
 @dataclass

@@ -18,6 +18,8 @@ class AgentState(TypedDict, total=False):
     qtype: QuestionType
     round: int
     round_limit: int
+    turn_start: int  # index in `messages` where the current question starts
+    chart_nudged: bool  # the one "make a chart" reminder for quantitative questions was sent
     ledger: dict  # EvidenceLedger.to_dict()
     charts: dict  # chart_id -> serialised ChartResult
     answer: dict | None  # Answer (model form)
