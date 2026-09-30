@@ -89,3 +89,18 @@ def test_a_failing_question_scores_zero_and_the_run_goes_on(settings):
 
     out = run_eval(settings, ITEMS[:1], "v1", ask, Metrics(1.0), Store(), "m", progress=lambda s: None)
     assert out.summary["metrics"]["run_error"] == 0.0
+
+
+def test_exhausted_credits_abort_the_run(settings):
+    from mmrag.eval.runner import QuotaExhausted
+
+    calls = []
+
+    def ask(question, settings, thread_id=None, model=None):
+        calls.append(question)
+        raise QuotaExhausted("insufficient_quota")
+
+    out = run_eval(settings, ITEMS, "v1", ask, Metrics(1.0), Store(), "m", baseline=True, progress=lambda s: None)
+    assert len(calls) == 1 and not out.passed and "aborted" in out.failures[0]
+    with db.connect(settings) as conn:
+        assert conn.execute("SELECT is_baseline, passed FROM eval_runs").fetchone() == (False, False)

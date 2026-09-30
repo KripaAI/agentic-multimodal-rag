@@ -31,12 +31,21 @@ MAX_CONTEXTS = 20
 TRANSIENT = ("APIConnectionError", "APITimeoutError", "RateLimitError", "InternalServerError")
 
 
+class QuotaExhausted(RuntimeError):
+    """The OpenAI account has no credits left: every further question would fail, so the run stops."""
+
+
 def _ask_with_retry(ask, question: str, settings, thread_id, model, attempts: int = 3) -> QueryRun:
-    """A network or rate-limit error is retried (after 10 s, then 30 s); anything else is a real failure."""
+    """A network or rate-limit error is retried (after 10 s, then 30 s); exhausted credits stop the
+    run at once; anything else is a real failure of this question."""
     for n in range(attempts):
         try:
             return ask(question, settings, thread_id=thread_id, model=model)
+        except QuotaExhausted:
+            raise
         except Exception as e:  # noqa: BLE001 - re-raised unless transient
+            if "insufficient_quota" in str(e) or "credit_balance_exhausted" in str(e):
+                raise QuotaExhausted(str(e)[:300]) from e
             if type(e).__name__ not in TRANSIENT or n == attempts - 1:
                 raise
             _log.warning("transient %s, retrying: %s", type(e).__name__, e)
@@ -163,6 +172,7 @@ def run_eval(settings: Settings, items: list[GoldenItem], golden_version: str, a
         conn.commit()
         threads: dict[str, str] = {}
         results: dict[str, dict[str, Score]] = {}
+        aborted = None
         for n, item in enumerate(items, 1):
             try:
                 run = _ask_with_retry(ask, item.question, settings,
@@ -170,6 +180,10 @@ def run_eval(settings: Settings, items: list[GoldenItem], golden_version: str, a
                 threads[item.question_id] = run.thread_id
                 scores, qtrace = score_item(item, run, metrics, store, data_dir), run.trace_id
             except Exception as e:  # noqa: BLE001 - one failure must not end the run; it scores 0
+                if isinstance(e, QuotaExhausted) or "insufficient_quota" in str(e):  # agent or judge
+                    aborted = f"aborted at {item.question_id}: OpenAI credits exhausted"
+                    progress(aborted)
+                    break
                 _log.warning("eval %s failed: %s", item.question_id, e)
                 scores, qtrace = {"run_error": (0.0, {"error": f"{type(e).__name__}: {e}"})}, None
             results[item.question_id] = scores
@@ -188,9 +202,12 @@ def run_eval(settings: Settings, items: list[GoldenItem], golden_version: str, a
         prev = conn.execute("SELECT summary FROM eval_runs WHERE is_baseline AND run_id <> %s AND summary IS NOT NULL "
                             "ORDER BY started_at DESC LIMIT 1", (run_id,)).fetchone()
         passed, failures = gate(summary, prev[0] if prev else None, settings.eval.regression_tolerance)
+        if aborted:  # an incomplete run never passes and never becomes a baseline
+            passed, failures = False, [aborted, *failures]
         summary["gate_failures"] = failures
-        conn.execute("UPDATE eval_runs SET finished_at = now(), summary = %s, passed = %s WHERE run_id = %s",
-                     (Jsonb(summary), passed, run_id))
+        conn.execute("UPDATE eval_runs SET finished_at = now(), summary = %s, passed = %s, "
+                     "is_baseline = is_baseline AND %s WHERE run_id = %s",
+                     (Jsonb(summary), passed, not aborted, run_id))
         conn.commit()
         span.set_attribute("mmrag.eval.passed", passed)
     return RunOutcome(run_id=run_id, summary=summary, passed=passed, failures=failures)

@@ -143,3 +143,18 @@ def test_a_transient_api_error_is_retried(tmp_path, monkeypatch):
     assert runner._ask_with_retry(ask, "q", None, None, "m") == "ok" and len(calls) == 2
     with pytest.raises(ValueError):  # a real bug is not retried
         runner._ask_with_retry(lambda *a, **k: (_ for _ in ()).throw(ValueError("bug")), "q", None, None, "m")
+
+
+def test_exhausted_credits_stop_at_once_without_retrying(monkeypatch):
+    from mmrag.eval import runner
+
+    monkeypatch.setattr(runner.time, "sleep", lambda s: pytest.fail("must not wait"))
+
+    class RateLimitError(Exception):
+        pass
+
+    def ask(*a, **k):
+        raise RateLimitError("Error code: 429 - {'error': {'code': 'insufficient_quota', 'message': 'You have no credits'}}")
+
+    with pytest.raises(runner.QuotaExhausted):
+        runner._ask_with_retry(ask, "q", None, None, "m")
