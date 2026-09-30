@@ -137,6 +137,16 @@ def gate(summary: dict, baseline: dict | None, tolerance: float) -> tuple[bool, 
     return not failures, failures
 
 
+def _spent(results: dict[str, dict[str, Score]], metrics, settings: Settings) -> float:
+    """Agent cost so far (from each answer) plus judge cost (its token count at the config price)."""
+    from mmrag.obs.querylog import cost_usd
+
+    agent = sum(r["cost_usd"][0] or 0.0 for r in results.values() if "cost_usd" in r)
+    usage = getattr(getattr(metrics, "judge", None), "usage", None)
+    judge = cost_usd(settings.eval.judge_model, usage[0], usage[1], settings) if usage and settings.eval.judge_model else 0
+    return agent + (judge or 0.0)
+
+
 @dataclass
 class RunOutcome:
     run_id: str
@@ -155,7 +165,7 @@ def _git_commit() -> str | None:
 
 def run_eval(settings: Settings, items: list[GoldenItem], golden_version: str, ask: Callable[..., QueryRun],
              metrics, store, agent_model: str, baseline: bool = False, label: str | None = None,
-             progress: Callable[[str], None] = print) -> RunOutcome:
+             progress: Callable[[str], None] = print, max_cost: float | None = None) -> RunOutcome:
     """Answer and score every item (follow-ups reuse their parent's thread), store everything."""
     from mmrag import db
 
@@ -193,9 +203,15 @@ def run_eval(settings: Settings, items: list[GoldenItem], golden_version: str, a
                 [(run_id, item.question_id, m, s, Jsonb(d), qtrace) for m, (s, d) in scores.items()])
             conn.commit()
             shown = ", ".join(f"{m} {s:.2f}" for m, (s, _) in scores.items() if s is not None and m in (*JUDGED, *DETERMINISTIC))
-            progress(f"[{n}/{len(items)}] {item.question_id}: {shown}")
+            spent = _spent(results, metrics, settings)
+            progress(f"[{n}/{len(items)}] {item.question_id}: {shown}  (spent ${spent:.3f})")
+            if max_cost is not None and spent >= max_cost:
+                aborted = f"stopped after {item.question_id}: cost cap ${max_cost:.2f} reached (spent ${spent:.3f})"
+                progress(aborted)
+                break
 
         summary = summarize(results, items)
+        summary["spent_usd"] = round(_spent(results, metrics, settings), 6)
         judge_usage = getattr(getattr(metrics, "judge", None), "usage", None)
         if judge_usage:
             summary["judge_tokens"] = {"input": judge_usage[0], "output": judge_usage[1]}

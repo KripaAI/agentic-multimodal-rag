@@ -104,3 +104,11 @@ def test_exhausted_credits_abort_the_run(settings):
     assert len(calls) == 1 and not out.passed and "aborted" in out.failures[0]
     with db.connect(settings) as conn:
         assert conn.execute("SELECT is_baseline, passed FROM eval_runs").fetchone() == (False, False)
+
+
+def test_the_cost_cap_stops_the_run(settings):
+    # each answer costs $0.01 (see _ask_factory); a $0.015 cap allows two questions, then stops
+    out = run_eval(settings, ITEMS, "v1", _ask_factory([]), Metrics(1.0), Store(), "m", baseline=True,
+                   progress=lambda s: None, max_cost=0.015)
+    assert not out.passed and "cost cap" in out.failures[0]
+    assert out.summary["questions"] == 2 and out.summary["spent_usd"] == pytest.approx(0.02)

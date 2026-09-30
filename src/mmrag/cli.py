@@ -391,7 +391,8 @@ def cmd_eval(settings: Settings, args: argparse.Namespace) -> int:
     print(f"Evaluating {len(items)} questions (golden set {version}) with {model}; judge {tuned.eval.judge_model}"
           + (f"; overrides {args.set}" if args.set else ""))
     out = run_eval(tuned, items, version, run_query, _judge(tuned), DbStore(tuned), model,
-                   baseline=args.baseline, label=label)
+                   baseline=args.baseline, label=label, max_cost=args.max_cost)
+    print(f"Spent ${out.summary.get('spent_usd', 0):.3f} (agent + judge)")
     print(f"\n{'PASSED' if out.passed else 'FAILED'} · run {out.run_id}")
     for f in out.failures:
         print(f"  gate: {f}")
@@ -554,6 +555,7 @@ def main(argv: list[str] | None = None) -> int:
     e_run.add_argument("--model", help="override agent.model")
     e_run.add_argument("--limit", type=int, help="only the first N questions (smoke test)")
     e_run.add_argument("--only", help="comma-separated question ids (their parent questions are included)")
+    e_run.add_argument("--max-cost", type=float, help="stop the run once agent + judge spend reaches this many US$")
     e_run.add_argument("--set", action="append", metavar="SECTION.FIELD=VALUE",
                        help="override a setting for this run, e.g. search.rerank=true (repeatable; shown in the label)")
     e_retr = eval_sub.add_parser("retrieval", help="search-only scores on the golden set (compare search settings)")
