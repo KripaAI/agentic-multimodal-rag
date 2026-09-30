@@ -43,10 +43,7 @@ WITH semantic AS (
 ),
 keyword AS (
     SELECT chunk_id, row_number() OVER (ORDER BY rank DESC, chunk_id) AS r FROM (
-        SELECT chunk_id, greatest(ts_rank_cd(tsv_english, qe), ts_rank_cd(tsv_simple, qs)) AS rank
-        FROM search_chunks, {keyword_queries}
-        WHERE collection = {collection} AND (tsv_english @@ qe OR tsv_simple @@ qs)
-        ORDER BY rank DESC LIMIT %(n)s
+        {keyword_ranked}
     ) ranked
 ),
 fused AS (
@@ -71,12 +68,25 @@ ORDER BY f.score DESC, f.chunk_id
 
 # keyword_mode "all": every word must match (websearch syntax). "any": the same words OR-ed, so a
 # full-sentence question still matches on its key terms; ts_rank_cd favours chunks matching more.
+# "bm25": BM25 ranking from ParadeDB pg_search (match any term); needs a database with pg_search
+# and a bm25 index on search_chunks (Phase 6 experiment, D8).
+_FTS = """SELECT chunk_id, greatest(ts_rank_cd(tsv_english, qe), ts_rank_cd(tsv_simple, qs)) AS rank
+        FROM search_chunks, {keyword_queries}
+        WHERE collection = {collection} AND (tsv_english @@ qe OR tsv_simple @@ qs)
+        ORDER BY rank DESC LIMIT %(n)s"""
 _KEYWORD_QUERIES = {
     "all": "websearch_to_tsquery('english', %(t)s) qe, websearch_to_tsquery('simple', %(t)s) qs",
     "any": "(SELECT coalesce(nullif(replace(plainto_tsquery('english', %(t)s)::text, ' & ', ' | '), ''), "
            "'x_no_terms')::tsquery) AS e(qe), (SELECT coalesce(nullif(replace(plainto_tsquery('simple', %(t)s)::text, "
            "' & ', ' | '), ''), 'x_no_terms')::tsquery) AS s(qs)",
 }
+_BM25 = """SELECT chunk_id, pdb.score(chunk_id) AS rank FROM search_chunks
+        WHERE keyword_text ||| %(t)s AND collection = {collection}
+        ORDER BY pdb.score(chunk_id) DESC LIMIT %(n)s"""
+
+
+def _keyword_ranked(mode: str) -> str:
+    return _BM25 if mode == "bm25" else _FTS.replace("{keyword_queries}", _KEYWORD_QUERIES[mode])
 
 _RELATED = """
 SELECT l.target_id, l.text_element_id, l.method, e.element_id, e.type, e.page,
@@ -103,8 +113,9 @@ def search(settings: Settings, query: str, collection: Collection, k: int | None
         span.set_attribute("mmrag.collection", collection)
         span.set_attribute("mmrag.k", k)
         vector = "[" + ",".join(repr(float(x)) for x in embed_query(query)) + "]"
+        keyword = sql.SQL(_keyword_ranked(cfg.keyword_mode)).format(collection=sql.Literal(collection))
         statement = sql.SQL(_SEARCH).format(collection=sql.Literal(collection),  # literal: matches the partial index
-                                            keyword_queries=sql.SQL(_KEYWORD_QUERIES[cfg.keyword_mode]))
+                                            keyword_ranked=keyword)
         fetch = max(k, cfg.rerank_candidates) if cfg.rerank else k
         with db.connect(settings) as conn:
             conn.execute(sql.SQL("SET LOCAL hnsw.ef_search = {}").format(sql.Literal(cfg.hnsw_ef_search)))

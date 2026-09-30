@@ -381,12 +381,17 @@ def cmd_eval(settings: Settings, args: argparse.Namespace) -> int:
                                                                                  if x.question_id in wanted}]
     if args.limit:
         items = items[:args.limit]
-    model = args.model or settings.agent.model
-    if model == settings.eval.judge_model:
+    from mmrag.eval.retrieval_eval import apply_overrides
+
+    tuned = apply_overrides(settings, args.set or [])  # e.g. search.rerank=true, agent.prompt_version=v2
+    label = " ".join(x for x in [args.label, f"[{', '.join(args.set)}]" if args.set else ""] if x) or None
+    model = args.model or tuned.agent.model
+    if model == tuned.eval.judge_model:
         raise SystemExit("the judge model must differ from the agent model (D14)")
-    print(f"Evaluating {len(items)} questions (golden set {version}) with {model}; judge {settings.eval.judge_model}")
-    out = run_eval(settings, items, version, run_query, _judge(settings), DbStore(settings), model,
-                   baseline=args.baseline, label=args.label)
+    print(f"Evaluating {len(items)} questions (golden set {version}) with {model}; judge {tuned.eval.judge_model}"
+          + (f"; overrides {args.set}" if args.set else ""))
+    out = run_eval(tuned, items, version, run_query, _judge(tuned), DbStore(tuned), model,
+                   baseline=args.baseline, label=label)
     print(f"\n{'PASSED' if out.passed else 'FAILED'} · run {out.run_id}")
     for f in out.failures:
         print(f"  gate: {f}")
@@ -549,6 +554,8 @@ def main(argv: list[str] | None = None) -> int:
     e_run.add_argument("--model", help="override agent.model")
     e_run.add_argument("--limit", type=int, help="only the first N questions (smoke test)")
     e_run.add_argument("--only", help="comma-separated question ids (their parent questions are included)")
+    e_run.add_argument("--set", action="append", metavar="SECTION.FIELD=VALUE",
+                       help="override a setting for this run, e.g. search.rerank=true (repeatable; shown in the label)")
     e_retr = eval_sub.add_parser("retrieval", help="search-only scores on the golden set (compare search settings)")
     e_retr.add_argument("--set", action="append", metavar="SECTION.FIELD=VALUE",
                         help="override a setting for this run, e.g. search.keyword_mode=any (repeatable)")
