@@ -79,3 +79,17 @@ def test_drafting_fills_each_quota_from_the_whole_pool_without_reusing_evidence(
     assert len(by["quantitative"]) == 3  # kept trying past the first few tables
     assert len(by["visual"]) == 4 and len(by["mixed"]) == 4
     assert not set(by["visual"]) & set(by["mixed"])  # no figure used twice
+
+
+def test_drafts_record_their_book_and_promote_reports_coverage(tmp_path):
+    from mmrag.eval.drafts import coverage, promote
+
+    fig = Evidence(chunk_id="d:figure:1", collection="figure", source_file="a.pdf", element_ids=["d:p3:image:1"],
+                   text="loop")
+    item = draft_one("v1", "visual", fig, Judge(DraftOut(question="Show the loop", reference_answer="r",
+                                                          expected_chart_values=[])))
+    assert item.source_file == "a.pdf"
+    drafts, golden = tmp_path / "drafts.jsonl", tmp_path / "golden.jsonl"
+    drafts.write_text(item.model_dump_json() + "\n", encoding="utf-8")
+    promote(drafts, golden, ["v1"])
+    assert coverage(golden) == {"a.pdf": {"visual": 1}}

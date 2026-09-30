@@ -24,6 +24,7 @@ class GoldenItem(BaseModel):
     expected_tool_calls: list[str] = []  # tool names the agent should use
     answerable: bool = True
     follows: str | None = None  # a follow-up: asked in the thread of this earlier question
+    source_file: str | None = None  # the book the reference comes from (coverage checks)
     note: str | None = None  # for reviewers
 
 

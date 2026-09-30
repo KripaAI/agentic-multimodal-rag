@@ -100,7 +100,7 @@ def draft_one(qid: str, qtype: str, ev: Evidence, judge) -> GoldenItem | None:
     return GoldenItem(question_id=qid, question=out.question, qtype=qtype, reference_answer=out.reference_answer,
                       reference_ids=ref, expected_figure_ids=ev.element_ids[:1] if qtype in ("visual", "mixed") else [],
                       expected_chart_values=values, expected_tool_calls=TOOLS[qtype],
-                      note=f"draft from {ev.source_file} ({ev.chunk_id})")
+                      source_file=ev.source_file, note=f"draft from {ev.source_file} ({ev.chunk_id})")
 
 
 def load_pool(settings) -> dict[str, list[Evidence]]:
@@ -185,6 +185,17 @@ img {{ max-width:100%; height:auto; border:1px solid var(--line); border-radius:
 <p class="meta">Pick 40: 15 conceptual, 10 visual, 8 quantitative, 4 mixed, 3 unanswerable. Edit any wording or reference answer.</p>
 {''.join(rows)}</main></body></html>
 """, encoding="utf-8")
+
+
+def coverage(golden_file: Path) -> dict[str, dict[str, int]]:
+    """Questions per book and type (unanswerable ones have no book)."""
+    from mmrag.eval.dataset import load_golden_set
+
+    out: dict[str, dict[str, int]] = {}
+    for item in load_golden_set(golden_file)[0]:
+        book = out.setdefault(item.source_file or "(none)", {})
+        book[item.qtype] = book.get(item.qtype, 0) + 1
+    return out
 
 
 def promote(drafts_file: Path, golden_file: Path, ids: list[str]) -> int:

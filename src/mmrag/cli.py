@@ -341,10 +341,12 @@ def cmd_eval(settings: Settings, args: argparse.Namespace) -> int:
         print(f"{len(drafts)} drafts -> {drafts_file}\nReview page: {page}")
         return 0
     if args.eval_command == "promote":
-        from mmrag.eval.drafts import promote
+        from mmrag.eval.drafts import coverage, promote
 
         n = promote(drafts_file, golden, [i.strip() for i in args.ids.split(",") if i.strip()])
         print(f"Golden set: {n} questions -> {golden}")
+        for book, types in coverage(golden).items():
+            print(f"  {sum(types.values()):>3}  {book}  " + ", ".join(f"{t} {c}" for t, c in sorted(types.items())))
         return 0
     if args.eval_command == "report":
         from mmrag.eval.report import write_report
