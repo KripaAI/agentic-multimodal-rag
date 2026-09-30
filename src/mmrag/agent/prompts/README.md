@@ -17,3 +17,7 @@ kept (constitution P10).
 - `compose_v2.md`: be complete, covering every part of the question and each key point the evidence gives.
 
 `agent.prompt_version` selects the set; v2 becomes the default only if the evaluation shows it scores higher.
+
+**v3 (Phase 6):** v1 plus only the chart rules of `system_v2` (ranges as two series, retry a rejected
+chart, chart printed numbers when a calculation fails). `compose_v3` = `compose_v1`: the v2
+"be complete" instruction coincided with lower scores on the full evaluation, so it is left out.

@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import re
 
-_NUMBER = re.compile(r"-?\d[\d,]*\.?\d*|-?\.\d+")
+_NUMBER = re.compile(r"(?:-?\d[\d,]*\.?\d*|-?\.\d+)(?:[eE][+-]?\d+)?")  # also 1.67772e+07
 _REFUSAL = re.compile(r"not (?:be )?(?:found|mention|stat|provid|includ|specif|say|cover|contain|give)|"
                       r"no information|could ?n[o']t find|does not (?:say|state|mention|provide)|"
                       r"do not (?:say|state|mention|provide|contain)", re.IGNORECASE)

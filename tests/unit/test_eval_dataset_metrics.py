@@ -47,6 +47,7 @@ def test_duplicate_ids_are_rejected(tmp_path):
 def test_chart_values_are_read_from_the_data_table():
     table = [["", "Memory (GB)", "Share"], ["FP32", "280", "45%"], ["INT8", "70", "0.1"]]
     assert chart_values(table) == [280.0, 0.45, 70.0, 0.1]
+    assert chart_values([["", "n"], ["full", "1.67772e+07"], ["lora", "131072"]]) == [16777200.0, 131072.0]
 
 
 def test_chart_numeric_is_all_or_nothing_per_chart():

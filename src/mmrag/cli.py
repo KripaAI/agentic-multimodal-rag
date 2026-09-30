@@ -390,8 +390,11 @@ def cmd_eval(settings: Settings, args: argparse.Namespace) -> int:
         raise SystemExit("the judge model must differ from the agent model (D14)")
     print(f"Evaluating {len(items)} questions (golden set {version}) with {model}; judge {tuned.eval.judge_model}"
           + (f"; overrides {args.set}" if args.set else ""))
-    out = run_eval(tuned, items, version, run_query, _judge(tuned), DbStore(tuned), model,
-                   baseline=args.baseline, label=label, max_cost=args.max_cost)
+    from mmrag.eval.runner import keep_awake
+
+    with keep_awake():  # a laptop dozing off would freeze the run mid-question
+        out = run_eval(tuned, items, version, run_query, _judge(tuned), DbStore(tuned), model,
+                       baseline=args.baseline, label=label, max_cost=args.max_cost)
     print(f"Spent ${out.summary.get('spent_usd', 0):.3f} (agent + judge)")
     print(f"\n{'PASSED' if out.passed else 'FAILED'} · run {out.run_id}")
     for f in out.failures:

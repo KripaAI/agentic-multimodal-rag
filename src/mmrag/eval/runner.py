@@ -6,7 +6,9 @@ from __future__ import annotations
 import hashlib
 import statistics
 import subprocess
+import sys
 import time
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -29,6 +31,24 @@ MUST_BE_PERFECT = ["chart_numeric", "refusal"]  # spec §9: 100% metrics
 GATED = [*JUDGED, "tool_call_accuracy", "figure_hit", "citation_accuracy"]
 MAX_CONTEXTS = 20
 TRANSIENT = ("APIConnectionError", "APITimeoutError", "RateLimitError", "InternalServerError")
+
+
+def _set_execution_state(flags: int) -> None:
+    if sys.platform == "win32":
+        import ctypes
+
+        ctypes.windll.kernel32.SetThreadExecutionState(flags)
+
+
+@contextmanager
+def keep_awake():
+    """Stop Windows from entering (modern) standby while an evaluation runs: standby froze the
+    process for up to 36 minutes per question in Phase 6. Power settings are not changed."""
+    _set_execution_state(0x80000000 | 0x00000001)  # ES_CONTINUOUS | ES_SYSTEM_REQUIRED
+    try:
+        yield
+    finally:
+        _set_execution_state(0x80000000)  # ES_CONTINUOUS: normal again
 
 
 class QuotaExhausted(RuntimeError):
@@ -126,6 +146,8 @@ def gate(summary: dict, baseline: dict | None, tolerance: float) -> tuple[bool, 
     """Fails on any 100% metric below 1.0, or a gated metric more than `tolerance` below the baseline."""
     failures = []
     now = summary["metrics"]
+    if "run_error" in now:
+        failures.append("some questions failed to run (see run_error in the report)")
     for m in MUST_BE_PERFECT:
         if now.get(m) is not None and now[m] < 1.0:
             failures.append(f"{m} = {now[m]:.3f} (must be 1.0)")

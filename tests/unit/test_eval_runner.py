@@ -158,3 +158,19 @@ def test_exhausted_credits_stop_at_once_without_retrying(monkeypatch):
 
     with pytest.raises(runner.QuotaExhausted):
         runner._ask_with_retry(ask, "q", None, None, "m")
+
+
+def test_keep_awake_blocks_sleep_during_the_run_and_restores_it(monkeypatch):
+    from mmrag.eval import runner
+
+    calls = []
+    monkeypatch.setattr(runner, "_set_execution_state", lambda flags: calls.append(flags))
+    with runner.keep_awake():
+        assert calls == [0x80000001]  # ES_CONTINUOUS | ES_SYSTEM_REQUIRED: no standby mid-run
+    assert calls == [0x80000001, 0x80000000]  # back to normal, even if the run fails
+
+
+def test_questions_that_failed_to_run_fail_the_gate():
+    s = {"metrics": {"run_error": 0.0, "faithfulness": 1.0}}
+    ok, failures = gate(s, None, 0.03)
+    assert not ok and "failed to run" in failures[0]
