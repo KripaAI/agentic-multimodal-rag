@@ -76,3 +76,13 @@ def test_gives_up_after_three_attempts(embedder_for):
     client = FakeClient(fail_first=[ApiError(429)] * 3)
     with pytest.raises(ApiError):
         embedder_for(client).embed(["x"])
+
+
+def test_a_damaged_cache_line_is_skipped_and_re_embedded(embedder_for, tmp_path):
+    # Phase 6: two processes appending at once left '{"k": ...}{"k": ...' on one line
+    embedder_for(FakeClient()).embed(["kept", "lost"])
+    lines = (tmp_path / "emb.jsonl").read_text(encoding="utf-8").splitlines()
+    (tmp_path / "emb.jsonl").write_text(lines[0] + "\n" + lines[1][:30] + lines[1] + "\n", encoding="utf-8")
+    client = FakeClient()
+    embedder_for(client).embed(["kept", "lost"])  # no crash
+    assert client.calls[0][1] == ["lost"]  # only the damaged entry is paid for again

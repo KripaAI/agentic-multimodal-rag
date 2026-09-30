@@ -91,3 +91,11 @@ def test_make_chart_renders_plotly_and_png(ledger, tmp_path):
     assert r.ok and r.chart_id and r.png_path.is_file() and r.png_path.stat().st_size > 1000
     spec = json.dumps(r.spec)
     assert "33.5" in spec and "p. 19" in spec
+
+
+def test_data_table_shows_large_numbers_exactly():
+    # Phase 6: 16,777,216 was displayed as '1.67772e+07' (rounded, and unreadable for users)
+    from mmrag.charts.engine import _fmt
+
+    assert _fmt(16777216.0) == "16777216" and _fmt(131072.0) == "131072"
+    assert _fmt(33.5) == "33.5" and _fmt(0.373) == "0.373" and _fmt(1e-06) == "0.000001"

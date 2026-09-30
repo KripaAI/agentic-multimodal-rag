@@ -71,6 +71,9 @@ def test_run_query_logs_hydrated_answer_and_continues_the_thread(settings):
     loc = run.answer.blocks[0].citations[0].locations[0]
     assert (loc.source_file, loc.page, loc.bbox) == ("t.pdf", 19, (10.0, 20.0, 300.0, 60.0))  # from the database
     assert run.rounds == 1 and run.validator_result == "ok" and len(run.trace_id) == 32
+    # for the Phase 6 evaluation: what was retrieved, in order, and whether the model refused
+    assert [e["id"] for e in run.evidence] == [f"{DOC}:text:1"] and "33.5 GB" in run.evidence[0]["text"]
+    assert run.not_found is False
     assert run.input_tokens == 50 + 100 + 120 + 300 and run.cost_usd == pytest.approx((570 * 1 + 60 * 4) / 1e6)
 
     follow = run_query("And per token?", settings, thread_id=run.thread_id, llm=ScriptedLLM(),
@@ -92,3 +95,17 @@ def test_answer_page_shows_blocks_sources_and_run_details(settings):
     assert page.parent == settings.resolve(settings.paths.data_dir) / "answers"
     assert "<strong>KV cache</strong>" in html  # markdown rendered
     assert "t.pdf" in html and "p. 19" in html and run.trace_id in html and run.thread_id in html
+
+
+def test_each_question_gets_its_own_trace_even_inside_an_eval_run(settings, monkeypatch):
+    from opentelemetry.sdk.trace import TracerProvider
+
+    import mmrag.agent.graph as graph
+
+    tracer = TracerProvider().get_tracer("t")
+    monkeypatch.setattr(graph, "get_tracer", lambda name: tracer)
+    with tracer.start_as_current_span("eval.run") as outer:
+        a = run_query("q1", settings, llm=ScriptedLLM(), embed_query=_embed(settings))
+        b = run_query("q2", settings, llm=ScriptedLLM(), embed_query=_embed(settings))
+    outer_id = format(outer.get_span_context().trace_id, "032x")
+    assert len({a.trace_id, b.trace_id, outer_id}) == 3

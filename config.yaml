@@ -64,16 +64,20 @@ agent:
   model: gpt-5.4-mini               # D4: owner's choice after the Phase 4 sample run (gpt-4o-mini made no valid charts)
   effort: null
   summary_model: gpt-5.4-mini       # table summaries; owner's pick from the Phase 3 comparison
-  rounds_default: 3
+  rounds_default: 4                 # Phase 6: 4th round lets a rejected chart be fixed (tested with v3)
   rounds_multi: 5
-  prompt_version: v1                # src/mmrag/agent/prompts/*_v1.md
+  prompt_version: v3                # src/mmrag/agent/prompts/*_v3.md; owner adopted v3 (chart rules), Phase 6
   tool_timeout_s: 30                # per tool call
   max_parallel_tools: 6             # tool calls run at once in one round
 
 # US$ per 1M tokens, per model, for query_log.cost_usd. Owner fills these in from OpenAI's
 # pricing page; a model left out is logged with cost null (tokens are always logged).
-pricing: {}
-#  gpt-5.4-mini: {input_per_mtok: 0.0, output_per_mtok: 0.0}
+# Standard (not batch) prices from developers.openai.com/api/docs/pricing, read 2026-09-29.
+pricing:
+  gpt-5.4-mini: {input_per_mtok: 0.75, output_per_mtok: 4.50}
+  gpt-4o-mini: {input_per_mtok: 0.15, output_per_mtok: 0.60}
+  gpt-4.1-mini: {input_per_mtok: 0.40, output_per_mtok: 1.60}   # evaluation judge (read 2026-09-30)
+  gpt-4.1: {input_per_mtok: 2.00, output_per_mtok: 8.00}
 
 ui:
   page_dpi: 150
@@ -107,5 +111,5 @@ retention:
 
 eval:
   golden_set: eval/golden_set.jsonl
-  judge_model: gpt-4.1               # D14: must differ from agent.model
+  judge_model: gpt-4.1-mini          # D14: must differ from agent.model; owner chose -mini (5x cheaper) for budget, Phase 6
   regression_tolerance: 0.03

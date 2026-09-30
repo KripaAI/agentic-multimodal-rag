@@ -17,12 +17,13 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Literal
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
+from opentelemetry.context import Context
 from pydantic import BaseModel, ConfigDict
 
 from mmrag.agent.answer import Answer, HydratedAnswer
@@ -97,6 +98,15 @@ def _conversation(state: AgentState) -> list[dict]:
     return earlier + msgs[start:]
 
 
+def _result_ids(content: str) -> list[str]:
+    """The ids a search returned, in rank order (query_log and the Phase 6 context precision)."""
+    try:
+        hits = json.loads(content)
+    except ValueError:
+        return []
+    return [h["id"] for h in hits if isinstance(h, dict) and "id" in h] if isinstance(hits, list) else []
+
+
 def _answered(messages: list[dict]) -> list[dict]:
     """Close any tool calls left without a result (OpenAI rejects them)."""
     done = {m["tool_call_id"] for m in messages if m.get("role") == "tool"}
@@ -160,7 +170,8 @@ def tools(state: AgentState, runtime: Runtime[AgentDeps]) -> dict:
         messages.append({"role": "user", "content": [
             {"type": "text", "text": "Images requested by " + ", ".join(r.name for r in images) + ":"},
             *[{"type": "image_path", "path": r.image_path} for r in images]]})
-    log = [{"round": round_no, "name": c.name, "arguments": c.arguments, "error": r.is_error}
+    log = [{"round": round_no, "name": c.name, "arguments": c.arguments, "error": r.is_error,
+            **({"result_ids": _result_ids(r.content)} if c.name.startswith("search_") and not r.is_error else {})}
            for c, r in zip(calls, results)]
     return {"messages": messages, "round": round_no, "ledger": ledger.to_dict(), "charts": _charts_out(ctx.charts),
             "tool_log": state.get("tool_log", []) + log}
@@ -305,6 +316,8 @@ class QueryRun:
     cost_usd: float | None  # None when the model has no price in config
     latency_ms: int
     validator_result: Literal["ok", "repaired", "dropped_blocks"]
+    evidence: list[dict] = field(default_factory=list)  # ledger in retrieval order (Phase 6 evaluation)
+    not_found: bool = False  # the model answered "not found in the documents"
 
 
 def run_query(question: str, settings: Settings, thread_id: str | None = None,
@@ -327,7 +340,8 @@ def run_query(question: str, settings: Settings, thread_id: str | None = None,
     deps = AgentDeps(settings=settings, llm=llm or OpenAILLM(get_client(settings), model, settings.agent.effort),
                      store=DbStore(settings), embed_query=embed_query or _default_embedder(settings), chart_dir=run_dir)
     started = time.monotonic()
-    with get_tracer("mmrag.agent").start_as_current_span("query") as span, \
+    # context=Context(): always a new trace, even inside `eval.run`, so each question has its own trace_id
+    with get_tracer("mmrag.agent").start_as_current_span("query", context=Context()) as span, \
             PostgresSaver.from_conn_string(settings.secrets.database_url.get_secret_value()) as saver:
         saver.setup()
         trace_id = format(span.get_span_context().trace_id, "032x")
@@ -343,6 +357,8 @@ def run_query(question: str, settings: Settings, thread_id: str | None = None,
                    rounds=state.get("round", 0), tool_calls=state.get("tool_log", []),
                    input_tokens=state.get("tokens_in", 0), output_tokens=state.get("tokens_out", 0),
                    cost_usd=cost_usd(model, state.get("tokens_in", 0), state.get("tokens_out", 0), settings),
-                   latency_ms=int((time.monotonic() - started) * 1000), validator_result=result)
+                   latency_ms=int((time.monotonic() - started) * 1000), validator_result=result,
+                   evidence=list((state.get("ledger") or {}).values()),
+                   not_found=bool((state.get("answer") or {}).get("not_found")))
     log_query(question, run, settings)
     return run

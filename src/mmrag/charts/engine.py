@@ -59,7 +59,10 @@ class ChartResult:
 
 
 def _fmt(v: float) -> str:
-    return f"{v:g}"
+    """The value as printed in the source: no rounding, no scientific notation (P4). `:g` turned
+    16,777,216 into '1.67772e+07' in Phase 6."""
+    text = f"{v:.15f}".rstrip("0").rstrip(".")
+    return text if text not in ("", "-0") else "0"
 
 
 def validate_chart(request: ChartRequest, ledger: EvidenceLedger) -> ChartResult:

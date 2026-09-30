@@ -108,3 +108,24 @@ def test_related_items_come_along_both_ways(indexed):
         [(f"{DOC}:p3:vector_figure:1", "vector_figure", "The four-step loop")]
     fig_hit = search(indexed, "loop", "figure", 1, embed_query=_embed_near(indexed, 3))[0]
     assert [(r["element_id"], r["type"]) for r in fig_hit.related] == [(f"{DOC}:p2:text:2", "text")]
+
+
+def test_keyword_mode_any_matches_a_long_question_on_its_key_word(indexed):
+    q = "which results were reported on the GSM8K benchmark for these models"
+    vec = _embed_near(indexed, 3)  # the vector points at the figure collection: keyword leg must find it
+    all_mode = search(indexed, q, "text", 3, embed_query=vec)
+    assert all(h.keyword_rank is None for h in all_mode)  # every word must match: nothing does
+    any_mode = search(indexed.model_copy(update={"search": indexed.search.model_copy(update={"keyword_mode": "any"})}),
+                      q, "text", 3, embed_query=vec)
+    assert any_mode[0].chunk_id == f"{DOC}:text:2" and any_mode[0].keyword_rank == 1
+
+
+def test_rerank_reorders_the_fused_candidates(indexed, monkeypatch):
+    import mmrag.retrieval.hybrid as hy
+
+    # the fake cross-encoder prefers the sampling chunk whatever RRF said
+    monkeypatch.setattr(hy, "_cross_encoder", lambda name: lambda q, docs: [2.0 if "temperature" in d else 0.0
+                                                                          for d in docs])
+    s = indexed.model_copy(update={"search": indexed.search.model_copy(update={"rerank": True})})
+    hits = search(s, "GSM8K", "text", 2, embed_query=_embed_near(indexed, 2))
+    assert hits[0].chunk_id == f"{DOC}:text:3" and len(hits) == 2

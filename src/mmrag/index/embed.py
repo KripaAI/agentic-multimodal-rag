@@ -42,10 +42,16 @@ class Embedder:
                                          / f"{self.model}-{self.dims}.jsonl")
         self._cache: dict[str, list[float]] = {}
         if self.cache_path.is_file():
+            damaged = 0
             for line in self.cache_path.read_text(encoding="utf-8").splitlines():
                 if line:
-                    row = json.loads(line)
-                    self._cache[row["k"]] = row["v"]
+                    try:
+                        row = json.loads(line)
+                        self._cache[row["k"]] = row["v"]
+                    except (ValueError, KeyError, TypeError):
+                        damaged += 1  # e.g. two processes appended at once; the text is simply re-embedded
+            if damaged:
+                _log.warning("embedding cache: skipped %d damaged line(s) in %s", damaged, self.cache_path)
 
     def _key(self, text: str) -> str:
         return hashlib.sha256(f"{self.model}\n{self.dims}\n{text}".encode("utf-8")).hexdigest()
@@ -75,8 +81,8 @@ class Embedder:
                 batch = missing[i:i + self.batch]
                 vectors = self._request([text_of[k] for k in batch])
                 self.cache_path.parent.mkdir(parents=True, exist_ok=True)
-                with self.cache_path.open("a", encoding="utf-8") as f:
-                    for k, v in zip(batch, vectors):
-                        self._cache[k] = v
-                        f.write(json.dumps({"k": k, "v": v}) + "\n")
+                for k, v in zip(batch, vectors):
+                    self._cache[k] = v
+                with self.cache_path.open("a", encoding="utf-8") as f:  # one write per batch: less interleaving
+                    f.write("".join(json.dumps({"k": k, "v": v}) + "\n" for k, v in zip(batch, vectors)))
         return [self._cache[k] for k in keys]
