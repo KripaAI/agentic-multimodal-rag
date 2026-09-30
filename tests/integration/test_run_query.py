@@ -109,3 +109,14 @@ def test_each_question_gets_its_own_trace_even_inside_an_eval_run(settings, monk
         b = run_query("q2", settings, llm=ScriptedLLM(), embed_query=_embed(settings))
     outer_id = format(outer.get_span_context().trace_id, "032x")
     assert len({a.trace_id, b.trace_id, outer_id}) == 3
+
+
+def test_the_asking_user_is_recorded(settings):
+    from mmrag.auth import service
+
+    service.add_user(settings, "carol@example.com")
+    with db.connect(settings) as conn:
+        uid = conn.execute("SELECT user_id FROM users").fetchone()[0]
+    run_query("How much does GQA save?", settings, llm=ScriptedLLM(), embed_query=_embed(settings), user_id=str(uid))
+    with db.connect(settings) as conn:
+        assert conn.execute("SELECT user_id FROM query_log").fetchone()[0] == uid

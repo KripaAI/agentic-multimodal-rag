@@ -310,6 +310,29 @@ def cmd_ask_batch(settings: Settings, args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+# ---------------------------------------------------------------- user (Phase 7)
+
+def cmd_user(settings: Settings, args: argparse.Namespace) -> int:
+    """Account administration (CLI only; there is no public sign-up). Temporary passwords are
+    shown once here and stored only as Argon2id hashes."""
+    from mmrag.auth import service
+
+    c = args.user_command
+    if c == "list":
+        for email, role, status, locked, last in service.list_users(settings):
+            print(f"{email:32} {role:6} {status:9} {'LOCKED' if locked else '':7} last sign-in {last or '-'}")
+        return 0
+    if c in ("add", "reset-password"):
+        temp = service.add_user(settings, args.email, role=args.role) if c == "add" \
+            else service.reset_password(settings, args.email)
+        print(f"Temporary password for {args.email.strip().lower()} (shown once; they must change it at sign-in):")
+        print(f"  {temp}")
+        return 0
+    {"disable": service.disable, "enable": service.enable, "unlock": service.unlock}[c](settings, args.email)
+    print(f"{c}d {args.email.strip().lower()}" if c != "unlock" else f"unlocked {args.email.strip().lower()}")
+    return 0
+
+
 # ---------------------------------------------------------------- eval (Phase 6)
 
 def _judge(settings: Settings):
@@ -546,6 +569,17 @@ def main(argv: list[str] | None = None) -> int:
                               help="stop once priced spend passes this many US$ (default 3)")
     report_parser = sub.add_parser("search-report", help="run the fixed retrieval test queries (Phase 3 gate)")
     report_parser.add_argument("--queries", default=str(PROJECT_ROOT / "eval" / "retrieval_queries.yaml"))
+    user_parser = sub.add_parser("user", help="account administration (Phase 7)")
+    user_sub = user_parser.add_subparsers(dest="user_command", required=True)
+    u_add = user_sub.add_parser("add", help="create an account with a temporary password (shown once)")
+    u_add.add_argument("--role", choices=["user", "admin"], default="user")
+    for name, helptext in [("reset-password", "new temporary password; ends every session"),
+                           ("disable", "block sign-in and end every session"), ("enable", "allow sign-in again"),
+                           ("unlock", "clear a lockout")]:
+        user_sub.add_parser(name, help=helptext)
+    for name in ("add", "reset-password", "disable", "enable", "unlock"):
+        user_sub.choices[name].add_argument("email")
+    user_sub.add_parser("list", help="email, role, status, lockout, last sign-in")
     eval_parser = sub.add_parser("eval", help="golden-set evaluation (Phase 6)")
     eval_sub = eval_parser.add_subparsers(dest="eval_command", required=True)
     e_draft = eval_sub.add_parser("draft-questions", help="draft candidate golden questions for review")
@@ -606,6 +640,7 @@ def main(argv: list[str] | None = None) -> int:
         "search-report": cmd_search_report,
         "caption": cmd_caption,
         "eval": cmd_eval,
+        "user": cmd_user,
     }
     try:
         return handlers[args.command](settings, args)

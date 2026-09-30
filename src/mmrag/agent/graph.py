@@ -292,14 +292,38 @@ def build_graph(settings: Settings, checkpointer=None):
     return g.compile(checkpointer=checkpointer)
 
 
-def answer_question(app, deps: AgentDeps, question: str, thread_id: str) -> AgentState:
-    """Run one question in a thread; per-question fields are reset, messages and ledger carry over."""
+STEP_LABELS = {"plan": "Understanding the question", "compose": "Writing the answer",
+               "validate": "Checking the citations", "repair": "Fixing the citations",
+               "give_up": "Removing unverified parts", "chart_nudge": "Checking whether a chart is needed"}
+TOOL_LABELS = {"search_text": "Searching the text", "search_figures": "Searching the figures",
+               "search_tables": "Searching the tables", "get_figure": "Reading a figure", "get_table": "Reading a table",
+               "view_page": "Looking at a page", "compute": "Calculating", "make_chart": "Drawing a chart"}
+
+
+def _labels(node: str, update: dict) -> list[str]:
+    """What the user sees for one finished graph step (Phase 7 progress indicator)."""
+    if node == "agent":
+        calls = ((update or {}).get("messages") or [{}])[-1].get("tool_calls") or []
+        return list(dict.fromkeys(TOOL_LABELS.get(c["function"]["name"], c["function"]["name"]) for c in calls))
+    return [STEP_LABELS[node]] if node in STEP_LABELS else []
+
+
+def answer_question(app, deps: AgentDeps, question: str, thread_id: str,
+                    on_step: Callable[[str], None] | None = None) -> AgentState:
+    """Run one question in a thread; per-question fields are reset, messages and ledger carry over.
+    With `on_step`, each step is reported as it finishes ("Searching the figures", ...)."""
     config = {"configurable": {"thread_id": thread_id}, "recursion_limit": 60}
     earlier = app.get_state(config).values.get("messages", [])
     start = {"messages": [{"role": "user", "content": question}], "question": question, "round": 0,
              "turn_start": len(earlier), "answer": None, "validation": None, "repaired": False, "notices": [],
              "tool_log": [], "charts": {}, "chart_nudged": False, "tokens_in": 0, "tokens_out": 0}
-    return app.invoke(start, config, context=deps)
+    if on_step is None:
+        return app.invoke(start, config, context=deps)
+    for chunk in app.stream(start, config, context=deps, stream_mode="updates"):
+        for node, update in chunk.items():
+            for label in _labels(node, update):
+                on_step(label)
+    return app.get_state(config).values
 
 
 @dataclass
@@ -322,10 +346,12 @@ class QueryRun:
 
 def run_query(question: str, settings: Settings, thread_id: str | None = None,
               model: str | None = None, llm: LLM | None = None,
-              embed_query: Callable[[str], list[float]] | None = None) -> QueryRun:
+              embed_query: Callable[[str], list[float]] | None = None, user_id: str | None = None,
+              on_step: Callable[[str], None] | None = None) -> QueryRun:
     """Answer one question in a (new or existing) thread: one OpenTelemetry trace, one
     query_log row. `model` overrides agent.model (used by the model comparison); `llm` and
-    `embed_query` replace the OpenAI clients in tests."""
+    `embed_query` replace the OpenAI clients in tests; `user_id` is who asked (history, limits);
+    `on_step` receives progress labels for the UI."""
     from langgraph.checkpoint.postgres import PostgresSaver
 
     from mmrag.agent.llm import OpenAILLM
@@ -347,7 +373,7 @@ def run_query(question: str, settings: Settings, thread_id: str | None = None,
         trace_id = format(span.get_span_context().trace_id, "032x")
         span.set_attribute("mmrag.thread_id", thread_id)
         span.set_attribute("gen_ai.request.model", model)
-        state = answer_question(build_graph(settings, saver), deps, question, thread_id)
+        state = answer_question(build_graph(settings, saver), deps, question, thread_id, on_step=on_step)
         span.set_attribute("mmrag.qtype", state.get("qtype", ""))
         span.set_attribute("mmrag.rounds_used", state.get("round", 0))
     result = "dropped_blocks" if state.get("notices") else "repaired" if state.get("repaired") else "ok"
@@ -360,5 +386,5 @@ def run_query(question: str, settings: Settings, thread_id: str | None = None,
                    latency_ms=int((time.monotonic() - started) * 1000), validator_result=result,
                    evidence=list((state.get("ledger") or {}).values()),
                    not_found=bool((state.get("answer") or {}).get("not_found")))
-    log_query(question, run, settings)
+    log_query(question, run, settings, user_id=user_id)
     return run
