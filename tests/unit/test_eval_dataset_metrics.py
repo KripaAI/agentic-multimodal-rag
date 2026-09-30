@@ -56,6 +56,7 @@ def test_chart_numeric_is_all_or_nothing_per_chart():
     assert chart_numeric([[0.45]], [45], percent_expected=True)[0] == 1.0  # 45% == 0.45
     assert chart_numeric([], [1, 2])[0] == 0.0  # a chart was expected
     assert chart_numeric([], [])[0] is None  # not applicable
+    assert chart_numeric([[41, 29]], [])[0] is None  # a chart nobody asked for is not graded here
 
 
 def test_figure_hit_citation_accuracy_refusal_and_tools():

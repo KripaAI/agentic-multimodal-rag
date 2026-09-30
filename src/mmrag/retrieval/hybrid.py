@@ -44,7 +44,7 @@ WITH semantic AS (
 keyword AS (
     SELECT chunk_id, row_number() OVER (ORDER BY rank DESC, chunk_id) AS r FROM (
         SELECT chunk_id, greatest(ts_rank_cd(tsv_english, qe), ts_rank_cd(tsv_simple, qs)) AS rank
-        FROM search_chunks, websearch_to_tsquery('english', %(t)s) qe, websearch_to_tsquery('simple', %(t)s) qs
+        FROM search_chunks, {keyword_queries}
         WHERE collection = {collection} AND (tsv_english @@ qe OR tsv_simple @@ qs)
         ORDER BY rank DESC LIMIT %(n)s
     ) ranked
@@ -68,6 +68,15 @@ CROSS JOIN LATERAL (
 ) loc
 ORDER BY f.score DESC, f.chunk_id
 """
+
+# keyword_mode "all": every word must match (websearch syntax). "any": the same words OR-ed, so a
+# full-sentence question still matches on its key terms; ts_rank_cd favours chunks matching more.
+_KEYWORD_QUERIES = {
+    "all": "websearch_to_tsquery('english', %(t)s) qe, websearch_to_tsquery('simple', %(t)s) qs",
+    "any": "(SELECT coalesce(nullif(replace(plainto_tsquery('english', %(t)s)::text, ' & ', ' | '), ''), "
+           "'x_no_terms')::tsquery) AS e(qe), (SELECT coalesce(nullif(replace(plainto_tsquery('simple', %(t)s)::text, "
+           "' & ', ' | '), ''), 'x_no_terms')::tsquery) AS s(qs)",
+}
 
 _RELATED = """
 SELECT l.target_id, l.text_element_id, l.method, e.element_id, e.type, e.page,
@@ -94,13 +103,20 @@ def search(settings: Settings, query: str, collection: Collection, k: int | None
         span.set_attribute("mmrag.collection", collection)
         span.set_attribute("mmrag.k", k)
         vector = "[" + ",".join(repr(float(x)) for x in embed_query(query)) + "]"
-        statement = sql.SQL(_SEARCH).format(collection=sql.Literal(collection))  # literal: matches the partial index
+        statement = sql.SQL(_SEARCH).format(collection=sql.Literal(collection),  # literal: matches the partial index
+                                            keyword_queries=sql.SQL(_KEYWORD_QUERIES[cfg.keyword_mode]))
+        fetch = max(k, cfg.rerank_candidates) if cfg.rerank else k
         with db.connect(settings) as conn:
             conn.execute(sql.SQL("SET LOCAL hnsw.ef_search = {}").format(sql.Literal(cfg.hnsw_ef_search)))
             rows = conn.execute(statement, {"q": vector, "t": query, "n": cfg.candidates, "rrf": cfg.rrf_k,
-                                            "k": k}).fetchall()
+                                            "k": fetch}).fetchall()
             hits = [Hit(chunk_id=r[0], collection=r[1], score=float(r[2]), semantic_rank=r[3], keyword_rank=r[4],
                         dense_text=r[5], source_file=r[6], locations=r[7] or []) for r in rows]
+            if cfg.rerank and hits:
+                with get_tracer("mmrag.retrieval").start_as_current_span("retrieval.rerank"):
+                    scores = _cross_encoder(cfg.rerank_model)(query, [h.dense_text for h in hits])
+                ranked = sorted(zip(scores, range(len(hits))), key=lambda t: (-t[0], t[1]))
+                hits = [hits[i] for _, i in ranked][:k]
             _attach_related(conn, hits)
         span.set_attribute("mmrag.semantic_hits", sum(h.semantic_rank is not None for h in hits))
         span.set_attribute("mmrag.keyword_hits", sum(h.keyword_rank is not None for h in hits))
@@ -119,6 +135,16 @@ def _attach_related(conn, hits: list[Hit]) -> None:
             if (target in mine or text_id in mine) and eid not in mine and eid not in seen:
                 seen.add(eid)
                 h.related.append({"element_id": eid, "type": etype, "page": page, "title": title, "method": method})
+
+
+@lru_cache(maxsize=2)
+def _cross_encoder(model_name: str) -> Callable[[str, list[str]], list[float]]:
+    """A local ONNX cross-encoder (fastembed): one relevance score per (query, passage). Loaded once;
+    the model downloads on first use."""
+    from fastembed.rerank.cross_encoder import TextCrossEncoder
+
+    model = TextCrossEncoder(model_name=model_name)
+    return lambda query, docs: [float(s) for s in model.rerank(query, docs)]
 
 
 _embedders: dict[int, Callable[[str], list[float]]] = {}

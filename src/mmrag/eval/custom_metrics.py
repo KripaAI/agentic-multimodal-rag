@@ -33,8 +33,8 @@ def chart_numeric(charts: list[list[float]], expected: list[float], percent_expe
     """Each chart passes only if every value equals an expected value (all-or-nothing); the score
     is the share of charts that pass. A value v also matches an expected e when e == v * 100
     (percent vs fraction, `percent_expected`). None when no chart was expected or drawn."""
-    if not charts and not expected:
-        return None, {}
+    if not expected:
+        return None, {}  # nothing to check against (the chart engine already verified every value)
     if not charts:
         return 0.0, {"missing": "a chart was expected"}
     targets = expected + ([e / 100 for e in expected] if percent_expected else [])

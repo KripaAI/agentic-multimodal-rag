@@ -348,6 +348,21 @@ def cmd_eval(settings: Settings, args: argparse.Namespace) -> int:
         for book, types in coverage(golden).items():
             print(f"  {sum(types.values()):>3}  {book}  " + ", ".join(f"{t} {c}" for t, c in sorted(types.items())))
         return 0
+    if args.eval_command == "retrieval":
+        from mmrag.agent.validator import DbStore
+        from mmrag.eval.retrieval_eval import apply_overrides, retrieval_scores
+        from mmrag.retrieval.hybrid import search
+
+        tuned = apply_overrides(settings, args.set or [])
+        items, _ = load_golden_set(golden)
+        out = retrieval_scores(items, lambda q, coll: search(tuned, q, coll, 10), DbStore(settings).locations)
+        label = ", ".join(args.set or []) or "current config"
+        print(f"{label}: " + " · ".join(f"{k} {v}" for k, v in out["overall"].items()))
+        for coll, st in out["by_collection"].items():
+            print(f"  {coll:7} " + " · ".join(f"{k} {v}" for k, v in st.items()))
+        if args.show_misses:
+            print("  missed: " + ", ".join(q for q, r in out["per_question"].items() if r["rank"] is None))
+        return 0
     if args.eval_command == "report":
         from mmrag.eval.report import write_report
 
@@ -534,6 +549,10 @@ def main(argv: list[str] | None = None) -> int:
     e_run.add_argument("--model", help="override agent.model")
     e_run.add_argument("--limit", type=int, help="only the first N questions (smoke test)")
     e_run.add_argument("--only", help="comma-separated question ids (their parent questions are included)")
+    e_retr = eval_sub.add_parser("retrieval", help="search-only scores on the golden set (compare search settings)")
+    e_retr.add_argument("--set", action="append", metavar="SECTION.FIELD=VALUE",
+                        help="override a setting for this run, e.g. search.keyword_mode=any (repeatable)")
+    e_retr.add_argument("--show-misses", action="store_true")
     e_report = eval_sub.add_parser("report", help="write the report for a run")
     e_report.add_argument("run_id")
     caption_parser = sub.add_parser("caption", help="VLM figure captioning on Kaggle (Phase 2)")

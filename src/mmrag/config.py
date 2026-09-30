@@ -84,6 +84,9 @@ class Search(_Section):
     top_k: int = Field(gt=0)
     hnsw_ef_search: int = Field(gt=0)
     rerank: bool
+    rerank_model: str = "Xenova/ms-marco-MiniLM-L-6-v2"  # local ONNX cross-encoder (fastembed)
+    rerank_candidates: int = Field(default=20, gt=0)  # fused results the reranker re-scores
+    keyword_mode: Literal["all", "any"] = "all"  # all: every word must match; any: OR of the words
 
 
 class Agent(_Section):

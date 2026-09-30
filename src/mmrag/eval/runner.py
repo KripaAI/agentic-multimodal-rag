@@ -6,6 +6,7 @@ from __future__ import annotations
 import hashlib
 import statistics
 import subprocess
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -27,6 +28,20 @@ DETERMINISTIC = ["tool_call_accuracy", "figure_hit", "citation_accuracy", "chart
 MUST_BE_PERFECT = ["chart_numeric", "refusal"]  # spec §9: 100% metrics
 GATED = [*JUDGED, "tool_call_accuracy", "figure_hit", "citation_accuracy"]
 MAX_CONTEXTS = 20
+TRANSIENT = ("APIConnectionError", "APITimeoutError", "RateLimitError", "InternalServerError")
+
+
+def _ask_with_retry(ask, question: str, settings, thread_id, model, attempts: int = 3) -> QueryRun:
+    """A network or rate-limit error is retried (after 10 s, then 30 s); anything else is a real failure."""
+    for n in range(attempts):
+        try:
+            return ask(question, settings, thread_id=thread_id, model=model)
+        except Exception as e:  # noqa: BLE001 - re-raised unless transient
+            if type(e).__name__ not in TRANSIENT or n == attempts - 1:
+                raise
+            _log.warning("transient %s, retrying: %s", type(e).__name__, e)
+            time.sleep(10 if n == 0 else 30)
+    raise AssertionError("unreachable")
 
 
 def _answer_text(run: QueryRun) -> str:
@@ -150,8 +165,8 @@ def run_eval(settings: Settings, items: list[GoldenItem], golden_version: str, a
         results: dict[str, dict[str, Score]] = {}
         for n, item in enumerate(items, 1):
             try:
-                run = ask(item.question, settings, thread_id=threads.get(item.follows) if item.follows else None,
-                          model=agent_model)
+                run = _ask_with_retry(ask, item.question, settings,
+                                      threads.get(item.follows) if item.follows else None, agent_model)
                 threads[item.question_id] = run.thread_id
                 scores, qtrace = score_item(item, run, metrics, store, data_dir), run.trace_id
             except Exception as e:  # noqa: BLE001 - one failure must not end the run; it scores 0

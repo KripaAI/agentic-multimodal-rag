@@ -95,3 +95,17 @@ def test_answer_page_shows_blocks_sources_and_run_details(settings):
     assert page.parent == settings.resolve(settings.paths.data_dir) / "answers"
     assert "<strong>KV cache</strong>" in html  # markdown rendered
     assert "t.pdf" in html and "p. 19" in html and run.trace_id in html and run.thread_id in html
+
+
+def test_each_question_gets_its_own_trace_even_inside_an_eval_run(settings, monkeypatch):
+    from opentelemetry.sdk.trace import TracerProvider
+
+    import mmrag.agent.graph as graph
+
+    tracer = TracerProvider().get_tracer("t")
+    monkeypatch.setattr(graph, "get_tracer", lambda name: tracer)
+    with tracer.start_as_current_span("eval.run") as outer:
+        a = run_query("q1", settings, llm=ScriptedLLM(), embed_query=_embed(settings))
+        b = run_query("q2", settings, llm=ScriptedLLM(), embed_query=_embed(settings))
+    outer_id = format(outer.get_span_context().trace_id, "032x")
+    assert len({a.trace_id, b.trace_id, outer_id}) == 3

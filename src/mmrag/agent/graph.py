@@ -23,6 +23,7 @@ from typing import Callable, Literal
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
+from opentelemetry.context import Context
 from pydantic import BaseModel, ConfigDict
 
 from mmrag.agent.answer import Answer, HydratedAnswer
@@ -339,7 +340,8 @@ def run_query(question: str, settings: Settings, thread_id: str | None = None,
     deps = AgentDeps(settings=settings, llm=llm or OpenAILLM(get_client(settings), model, settings.agent.effort),
                      store=DbStore(settings), embed_query=embed_query or _default_embedder(settings), chart_dir=run_dir)
     started = time.monotonic()
-    with get_tracer("mmrag.agent").start_as_current_span("query") as span, \
+    # context=Context(): always a new trace, even inside `eval.run`, so each question has its own trace_id
+    with get_tracer("mmrag.agent").start_as_current_span("query", context=Context()) as span, \
             PostgresSaver.from_conn_string(settings.secrets.database_url.get_secret_value()) as saver:
         saver.setup()
         trace_id = format(span.get_span_context().trace_id, "032x")

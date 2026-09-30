@@ -123,3 +123,23 @@ def test_citations_on_the_reference_page_count_and_search_rankings_reach_the_jud
     scores = score_item(ITEM.model_copy(update={"expected_chart_values": []}), run, m, Store(), tmp_path)
     assert scores["citation_accuracy"][0] == 1.0  # same page as the reference passage
     assert m.rankings == [["d:text:2", "d:text:1"]]
+
+
+def test_a_transient_api_error_is_retried(tmp_path, monkeypatch):
+    from mmrag.eval import runner
+
+    monkeypatch.setattr(runner.time, "sleep", lambda s: None)
+    calls = []
+
+    class APIConnectionError(Exception):
+        pass
+
+    def ask(q, s, thread_id=None, model=None):
+        calls.append(q)
+        if len(calls) == 1:
+            raise APIConnectionError("Connection error.")
+        return "ok"
+
+    assert runner._ask_with_retry(ask, "q", None, None, "m") == "ok" and len(calls) == 2
+    with pytest.raises(ValueError):  # a real bug is not retried
+        runner._ask_with_retry(lambda *a, **k: (_ for _ in ()).throw(ValueError("bug")), "q", None, None, "m")
