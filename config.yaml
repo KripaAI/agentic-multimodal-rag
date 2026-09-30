@@ -64,9 +64,9 @@ agent:
   model: gpt-5.4-mini               # D4: owner's choice after the Phase 4 sample run (gpt-4o-mini made no valid charts)
   effort: null
   summary_model: gpt-5.4-mini       # table summaries; owner's pick from the Phase 3 comparison
-  rounds_default: 3
+  rounds_default: 4                 # Phase 6: 4th round lets a rejected chart be fixed (tested with v3)
   rounds_multi: 5
-  prompt_version: v1                # src/mmrag/agent/prompts/*_v1.md
+  prompt_version: v3                # src/mmrag/agent/prompts/*_v3.md; owner adopted v3 (chart rules), Phase 6
   tool_timeout_s: 30                # per tool call
   max_parallel_tools: 6             # tool calls run at once in one round
 

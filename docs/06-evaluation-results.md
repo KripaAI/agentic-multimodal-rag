@@ -85,7 +85,7 @@ The full list, with reasons, is in `data/eval/spot_check.json` (local file).
 ## 7. Final configuration
 
 - Search: hybrid (semantic + all-words keyword, RRF), no reranker. The reranker, keyword modes and BM25 remain available as settings.
-- Agent: `gpt-5.4-mini`, prompts `v1`, 3 rounds (5 for multi-part). Prompts `v3` are ready to adopt after a confirming run.
+- Agent: `gpt-5.4-mini`, **prompts `v3` and 4 rounds (5 for multi-part)**. The owner adopted v3 on 2026-09-30, in the configuration tested on the chart questions (chart accuracy 0.63 → 0.88). A live check on n03 produced an accepted chart of printed values (20 %, 60 %) instead of the rejected midpoint 67.5. A full 40-question confirmation run is still pending budget.
 - Evaluation: judge `gpt-4.1-mini`, `mmrag eval run --max-cost`, and the baseline run recorded in `eval_runs`.
 
 ## 8. Spend
