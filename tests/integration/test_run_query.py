@@ -71,6 +71,9 @@ def test_run_query_logs_hydrated_answer_and_continues_the_thread(settings):
     loc = run.answer.blocks[0].citations[0].locations[0]
     assert (loc.source_file, loc.page, loc.bbox) == ("t.pdf", 19, (10.0, 20.0, 300.0, 60.0))  # from the database
     assert run.rounds == 1 and run.validator_result == "ok" and len(run.trace_id) == 32
+    # for the Phase 6 evaluation: what was retrieved, in order, and whether the model refused
+    assert [e["id"] for e in run.evidence] == [f"{DOC}:text:1"] and "33.5 GB" in run.evidence[0]["text"]
+    assert run.not_found is False
     assert run.input_tokens == 50 + 100 + 120 + 300 and run.cost_usd == pytest.approx((570 * 1 + 60 * 4) / 1e6)
 
     follow = run_query("And per token?", settings, thread_id=run.thread_id, llm=ScriptedLLM(),

@@ -17,7 +17,7 @@ from __future__ import annotations
 import json
 import time
 import uuid
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Callable, Literal
 
@@ -305,6 +305,8 @@ class QueryRun:
     cost_usd: float | None  # None when the model has no price in config
     latency_ms: int
     validator_result: Literal["ok", "repaired", "dropped_blocks"]
+    evidence: list[dict] = field(default_factory=list)  # ledger in retrieval order (Phase 6 evaluation)
+    not_found: bool = False  # the model answered "not found in the documents"
 
 
 def run_query(question: str, settings: Settings, thread_id: str | None = None,
@@ -343,6 +345,8 @@ def run_query(question: str, settings: Settings, thread_id: str | None = None,
                    rounds=state.get("round", 0), tool_calls=state.get("tool_log", []),
                    input_tokens=state.get("tokens_in", 0), output_tokens=state.get("tokens_out", 0),
                    cost_usd=cost_usd(model, state.get("tokens_in", 0), state.get("tokens_out", 0), settings),
-                   latency_ms=int((time.monotonic() - started) * 1000), validator_result=result)
+                   latency_ms=int((time.monotonic() - started) * 1000), validator_result=result,
+                   evidence=list((state.get("ledger") or {}).values()),
+                   not_found=bool((state.get("answer") or {}).get("not_found")))
     log_query(question, run, settings)
     return run

@@ -310,6 +310,73 @@ def cmd_ask_batch(settings: Settings, args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+# ---------------------------------------------------------------- eval (Phase 6)
+
+def _judge(settings: Settings):
+    from mmrag.eval.judge import Metrics, OpenAIJudge
+    from mmrag.llm import get_client
+
+    if not settings.eval.judge_model:
+        raise SystemExit("eval.judge_model is not set in config.yaml")
+    return Metrics(OpenAIJudge(get_client(settings), settings.eval.judge_model, settings.embed.model,
+                               settings.embed.dims))
+
+
+def cmd_eval(settings: Settings, args: argparse.Namespace) -> int:
+    """Phase 6: draft golden questions, promote the chosen ones, run and report the evaluation."""
+    from mmrag.eval.dataset import load_golden_set
+
+    golden = settings.resolve(settings.eval.golden_set)
+    drafts_file = golden.with_name("drafts.jsonl")
+    data_dir = settings.resolve(settings.paths.data_dir)
+    if args.eval_command == "draft-questions":
+        from mmrag import db
+        from mmrag.eval.drafts import draft_questions, write_drafts
+
+        drafts = draft_questions(settings, _judge(settings).judge, seed=args.seed)
+        with db.connect(settings) as conn:
+            assets = dict(conn.execute("SELECT element_id, asset_path FROM elements WHERE asset_path IS NOT NULL"))
+        page = data_dir / "eval" / "drafts_review.html"
+        write_drafts(drafts, drafts_file, page, data_dir, assets)
+        print(f"{len(drafts)} drafts -> {drafts_file}\nReview page: {page}")
+        return 0
+    if args.eval_command == "promote":
+        from mmrag.eval.drafts import promote
+
+        n = promote(drafts_file, golden, [i.strip() for i in args.ids.split(",") if i.strip()])
+        print(f"Golden set: {n} questions -> {golden}")
+        return 0
+    if args.eval_command == "report":
+        from mmrag.eval.report import write_report
+
+        print(f"Report: {write_report(settings, args.run_id)}")
+        return 0
+    # run
+    from mmrag.agent.graph import run_query
+    from mmrag.agent.validator import DbStore
+    from mmrag.eval.report import write_report
+    from mmrag.eval.runner import run_eval
+
+    items, version = load_golden_set(golden)
+    if args.only:
+        wanted = set(args.only.split(","))
+        items = [i for i in items if i.question_id in wanted or i.question_id in {x.follows for x in items
+                                                                                 if x.question_id in wanted}]
+    if args.limit:
+        items = items[:args.limit]
+    model = args.model or settings.agent.model
+    if model == settings.eval.judge_model:
+        raise SystemExit("the judge model must differ from the agent model (D14)")
+    print(f"Evaluating {len(items)} questions (golden set {version}) with {model}; judge {settings.eval.judge_model}")
+    out = run_eval(settings, items, version, run_query, _judge(settings), DbStore(settings), model,
+                   baseline=args.baseline, label=args.label)
+    print(f"\n{'PASSED' if out.passed else 'FAILED'} · run {out.run_id}")
+    for f in out.failures:
+        print(f"  gate: {f}")
+    print(f"Report: {write_report(settings, out.run_id)}")
+    return 0 if out.passed else 1
+
+
 # ---------------------------------------------------------------- caption (Phase 2)
 
 def _caption_dirs(settings: Settings, pdf: Path) -> tuple[str, Path]:
@@ -453,6 +520,20 @@ def main(argv: list[str] | None = None) -> int:
                               help="stop once priced spend passes this many US$ (default 3)")
     report_parser = sub.add_parser("search-report", help="run the fixed retrieval test queries (Phase 3 gate)")
     report_parser.add_argument("--queries", default=str(PROJECT_ROOT / "eval" / "retrieval_queries.yaml"))
+    eval_parser = sub.add_parser("eval", help="golden-set evaluation (Phase 6)")
+    eval_sub = eval_parser.add_subparsers(dest="eval_command", required=True)
+    e_draft = eval_sub.add_parser("draft-questions", help="draft candidate golden questions for review")
+    e_draft.add_argument("--seed", type=int, default=7)
+    e_promote = eval_sub.add_parser("promote", help="copy the chosen drafts into the golden set")
+    e_promote.add_argument("ids", help="comma-separated draft ids, in order")
+    e_run = eval_sub.add_parser("run", help="answer and score the golden set; non-zero exit on regression")
+    e_run.add_argument("--baseline", action="store_true", help="store this run as the new baseline")
+    e_run.add_argument("--label", help="what changed, e.g. 'reranker on'")
+    e_run.add_argument("--model", help="override agent.model")
+    e_run.add_argument("--limit", type=int, help="only the first N questions (smoke test)")
+    e_run.add_argument("--only", help="comma-separated question ids (their parent questions are included)")
+    e_report = eval_sub.add_parser("report", help="write the report for a run")
+    e_report.add_argument("run_id")
     caption_parser = sub.add_parser("caption", help="VLM figure captioning on Kaggle (Phase 2)")
     caption_sub = caption_parser.add_subparsers(dest="caption_command", required=True)
     c_bundle = caption_sub.add_parser("bundle", help="package figures and context for the GPU job")
@@ -491,6 +572,7 @@ def main(argv: list[str] | None = None) -> int:
         "ask-batch": cmd_ask_batch,
         "search-report": cmd_search_report,
         "caption": cmd_caption,
+        "eval": cmd_eval,
     }
     try:
         return handlers[args.command](settings, args)
