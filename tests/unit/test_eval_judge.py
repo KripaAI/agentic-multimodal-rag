@@ -76,3 +76,13 @@ def test_factual_correctness_is_claim_f1():
                                       reference_claims=[Claim(statement="r", supported=True, reason="")]))
     # precision 1/2, recall 1/1 -> F1 2/3
     assert Metrics(judge).factual_correctness("answer", "reference")[0] == pytest.approx(2 / 3)
+
+
+def test_context_precision_averages_each_search_ranking_when_given():
+    # two searches ran in parallel; each is ranked on its own (order across searches is arbitrary)
+    judge = FakeJudge(ContextVerdicts(verdicts=[Verdict(useful=False, reason=""), Verdict(useful=False, reason=""),
+                                                Verdict(useful=True, reason="")]))
+    ctx = [("t1", "a"), ("t2", "b"), ("tab", "c")]
+    score, details = Metrics(judge).context_precision("q", "ref", ctx, rankings=[["t1", "t2"], ["tab"]])
+    assert score == 1.0  # the only search that found anything ranked it first
+    assert details["per_search"] == [None, 1.0]

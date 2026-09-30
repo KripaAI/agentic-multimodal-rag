@@ -46,8 +46,10 @@ INSTRUCTIONS = {
     "mixed": "The EVIDENCE describes a figure and the paragraph that discusses it. Write one question that needs both "
              "an explanation and the figure, and a 3-4 sentence reference answer using only the EVIDENCE.",
 }
-RULES = ("Do not mention page, figure or table numbers, file names, or 'the document'. Do not copy a sentence "
-         "verbatim into the question. Leave expected_chart_values empty unless asked for it.")
+RULES = ("Do not mention page, figure or table numbers, file names, or 'the document'. Ask as someone who has not "
+         "seen the source: never write 'the table', 'the slide', 'shown above', 'the outer ring' or similar (a "
+         "visual question may ask 'Show me a diagram of ...'). Do not copy a sentence verbatim into the question. "
+         "Leave expected_chart_values empty unless asked for it.")
 
 
 class DraftOut(BaseModel):
@@ -140,12 +142,14 @@ def draft_questions(settings, judge, seed: int = 7, progress=print) -> list[tupl
     pool = load_pool(settings)
     drafts: list[tuple[GoldenItem, Evidence | None]] = []
     prefix = {"conceptual": "c", "visual": "v", "quantitative": "n", "mixed": "m"}
+    used: set[str] = set()  # each piece of evidence backs one question only
     for qtype, n in QUOTA.items():
-        picked = pick_evidence(pool[SOURCE[qtype]], n + 4, seed)  # a few spares for dropped drafts
+        candidates = [e for e in pool[SOURCE[qtype]] if e.chunk_id not in used]
         made = 0
-        for ev in picked:
+        for ev in pick_evidence(candidates, len(candidates), seed):  # keep trying until the quota is met
             if made == n:
                 break
+            used.add(ev.chunk_id)
             item = draft_one(f"{prefix[qtype]}{made + 1:02d}", qtype, ev, judge)
             if item:
                 drafts.append((item, ev))

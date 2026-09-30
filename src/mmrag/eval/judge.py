@@ -15,6 +15,7 @@ Every score returns its details (claims, verdicts, reasons) for the report and t
 from __future__ import annotations
 
 import math
+import statistics
 from typing import Protocol, TypeVar
 
 from pydantic import BaseModel, ConfigDict
@@ -77,6 +78,16 @@ def _cosine(a: list[float], b: list[float]) -> float:
     return sum(x * y for x, y in zip(a, b)) / (na * nb) if na and nb else 0.0
 
 
+def _average_precision(useful: list[bool]) -> float | None:
+    """RAGAS context precision for one ranked list; None when nothing in it was useful."""
+    hits, total = 0, 0.0
+    for k, u in enumerate(useful, 1):
+        if u:
+            hits += 1
+            total += hits / k
+    return total / hits if hits else None
+
+
 def _share(claims: list[Claim]) -> float | None:
     return sum(c.supported for c in claims) / len(claims) if claims else None
 
@@ -113,7 +124,12 @@ class Metrics:
         score = sum(_cosine(vectors[0], v) for v in vectors[1:]) / len(out.questions)
         return score, {"questions": out.questions}
 
-    def context_precision(self, question: str, reference: str, contexts: list[Context]) -> tuple[float | None, dict]:
+    def context_precision(self, question: str, reference: str, contexts: list[Context],
+                          rankings: list[list[str]] | None = None) -> tuple[float | None, dict]:
+        """With `rankings` (the result ids of each search call, in rank order), each search is scored
+        on its own and the searches that found something useful are averaged: an agent's parallel
+        searches have no meaningful order between them. A search that found nothing is left out;
+        0 when none did."""
         if not contexts:
             return None, {}
         out = self._ask(
@@ -122,12 +138,15 @@ class Metrics:
             f"QUESTION: {question}\n\nREFERENCE ANSWER:\n{reference}\n\nEVIDENCE:\n{_contexts(contexts)}",
             ContextVerdicts)
         useful = [v.useful for v in out.verdicts[:len(contexts)]]
-        hits, total = 0, 0.0
-        for k, u in enumerate(useful, 1):
-            if u:
-                hits += 1
-                total += hits / k
-        return (total / hits if hits else 0.0), {"verdicts": [v.model_dump() for v in out.verdicts]}
+        details = {"verdicts": [v.model_dump() for v in out.verdicts]}
+        if not rankings:
+            ap = _average_precision(useful)
+            return (ap if ap is not None else 0.0), details
+        by_id = {cid: u for (cid, _), u in zip(contexts, useful)}
+        per = [_average_precision([by_id.get(i, False) for i in r]) for r in rankings]
+        found = [p for p in per if p is not None]
+        details["per_search"] = per
+        return (statistics.fmean(found) if found else 0.0), details
 
     def context_recall(self, question: str, reference: str, contexts: list[Context]) -> tuple[float | None, dict]:
         out = self._ask(

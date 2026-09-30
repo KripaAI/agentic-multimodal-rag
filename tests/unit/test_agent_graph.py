@@ -71,6 +71,7 @@ def test_plan_search_compose_validate(parse_settings, tmp_path):
     _, state = _run(llm, parse_settings, tmp_path)
     assert state["validation"]["ok"] and state["round"] == 1 and state["qtype"] == "conceptual"
     assert [t["name"] for t in state["tool_log"]] == ["search_text"]
+    assert state["tool_log"][0]["result_ids"] == ["d:text:1"]  # each search's ranking, for the evaluation
     assert state["tokens_in"] == 5 + 10 + 10 + 20 and state["tokens_out"] == 1 + 3 + 2 + 8
     assert state["validation"]["answer"]["blocks"][0]["citations"][0]["locations"][0]["page"] == 3
 

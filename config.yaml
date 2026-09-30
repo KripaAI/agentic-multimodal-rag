@@ -72,8 +72,10 @@ agent:
 
 # US$ per 1M tokens, per model, for query_log.cost_usd. Owner fills these in from OpenAI's
 # pricing page; a model left out is logged with cost null (tokens are always logged).
-pricing: {}
-#  gpt-5.4-mini: {input_per_mtok: 0.0, output_per_mtok: 0.0}
+# Standard (not batch) prices from developers.openai.com/api/docs/pricing, read 2026-09-29.
+pricing:
+  gpt-5.4-mini: {input_per_mtok: 0.75, output_per_mtok: 4.50}
+  gpt-4o-mini: {input_per_mtok: 0.15, output_per_mtok: 0.60}
 
 ui:
   page_dpi: 150

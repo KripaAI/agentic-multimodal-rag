@@ -51,3 +51,31 @@ def test_evidence_is_spread_across_books():
     picked = pick_evidence(pool, 6, seed=1)
     assert len(picked) == 6 and {e.source_file for e in picked} == {"a.pdf", "b.pdf", "c.pdf"}
     assert len({e.chunk_id for e in picked}) == 6
+
+
+def test_drafting_fills_each_quota_from_the_whole_pool_without_reusing_evidence(monkeypatch):
+    from mmrag.eval import drafts as dr
+
+    figs = [Evidence(chunk_id=f"b{i % 2}:figure:{i}", collection="figure", source_file=f"b{i % 2}.pdf",
+                     element_ids=[f"b{i % 2}:p{i}:image:1"], text="fig " * 40) for i in range(12)]
+    tabs = [Evidence(chunk_id=f"t:table:{i}", collection="table", source_file="t.pdf", element_ids=[f"t:p{i}:table:1"],
+                     text="a | 1 | 2 | 3 | 4") for i in range(30)]
+    monkeypatch.setattr(dr, "load_pool", lambda s: {"text": [], "figure": figs, "table": tabs})
+    monkeypatch.setattr(dr, "unanswerable_items", lambda s: [])
+    monkeypatch.setattr(dr, "QUOTA", {"visual": 4, "quantitative": 3, "mixed": 4})
+
+    calls = {"n": 0}
+
+    class J:
+        def structured(self, messages, schema):
+            calls["n"] += 1  # only every 5th table draft uses printed values
+            ok = calls["n"] % 5 == 0
+            return DraftOut(question="q", reference_answer="a", expected_chart_values=[1, 2] if ok else [9])
+
+    out = dr.draft_questions(None, J(), seed=1, progress=lambda s: None)
+    by = {}
+    for item, ev in out:
+        by.setdefault(item.qtype, []).append(ev.chunk_id)
+    assert len(by["quantitative"]) == 3  # kept trying past the first few tables
+    assert len(by["visual"]) == 4 and len(by["mixed"]) == 4
+    assert not set(by["visual"]) & set(by["mixed"])  # no figure used twice

@@ -97,6 +97,15 @@ def _conversation(state: AgentState) -> list[dict]:
     return earlier + msgs[start:]
 
 
+def _result_ids(content: str) -> list[str]:
+    """The ids a search returned, in rank order (query_log and the Phase 6 context precision)."""
+    try:
+        hits = json.loads(content)
+    except ValueError:
+        return []
+    return [h["id"] for h in hits if isinstance(h, dict) and "id" in h] if isinstance(hits, list) else []
+
+
 def _answered(messages: list[dict]) -> list[dict]:
     """Close any tool calls left without a result (OpenAI rejects them)."""
     done = {m["tool_call_id"] for m in messages if m.get("role") == "tool"}
@@ -160,7 +169,8 @@ def tools(state: AgentState, runtime: Runtime[AgentDeps]) -> dict:
         messages.append({"role": "user", "content": [
             {"type": "text", "text": "Images requested by " + ", ".join(r.name for r in images) + ":"},
             *[{"type": "image_path", "path": r.image_path} for r in images]]})
-    log = [{"round": round_no, "name": c.name, "arguments": c.arguments, "error": r.is_error}
+    log = [{"round": round_no, "name": c.name, "arguments": c.arguments, "error": r.is_error,
+            **({"result_ids": _result_ids(r.content)} if c.name.startswith("search_") and not r.is_error else {})}
            for c, r in zip(calls, results)]
     return {"messages": messages, "round": round_no, "ledger": ledger.to_dict(), "charts": _charts_out(ctx.charts),
             "tool_log": state.get("tool_log", []) + log}

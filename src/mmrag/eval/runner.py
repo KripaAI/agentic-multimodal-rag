@@ -41,14 +41,19 @@ def score_item(item: GoldenItem, run: QueryRun, metrics, store, data_dir: Path) 
     if not item.answerable:
         scores["refusal"] = (cm.refusal(False, run.not_found, text), {"not_found_flag": run.not_found})
     else:
-        contexts = [(e["id"], e["text"]) for e in run.evidence if not e["id"].startswith("compute:")][:MAX_CONTEXTS]
+        rankings = [t["result_ids"] for t in run.tool_calls if t.get("result_ids")]
+        texts = {e["id"]: e["text"] for e in run.evidence if not e["id"].startswith("compute:")}
+        ranked = [i for r in rankings for i in r if i in texts]  # searched evidence first, then the rest
+        order = list(dict.fromkeys(ranked + list(texts)))[:MAX_CONTEXTS]
+        contexts = [(i, texts[i]) for i in order]
         images = [str(data_dir / b.content["asset_path"]) for b in blocks
                   if b.type == "image" and b.content.get("asset_path")]
         scores["faithfulness"] = metrics.faithfulness(item.question, text, contexts)
         if images:
             scores["multimodal_faithfulness"] = metrics.faithfulness(item.question, text, contexts, images=images)
         scores["response_relevancy"] = metrics.response_relevancy(item.question, text)
-        scores["context_precision"] = metrics.context_precision(item.question, item.reference_answer, contexts)
+        scores["context_precision"] = metrics.context_precision(item.question, item.reference_answer, contexts,
+                                                                rankings=rankings or None)
         scores["context_recall"] = metrics.context_recall(item.question, item.reference_answer, contexts)
         scores["factual_correctness"] = metrics.factual_correctness(text, item.reference_answer)
 
@@ -58,9 +63,13 @@ def score_item(item: GoldenItem, run: QueryRun, metrics, store, data_dir: Path) 
         scores["figure_hit"] = (cm.figure_hit(shown, item.expected_figure_ids), {"shown": shown})
         charts = [cm.chart_values(b.content.get("data_table") or []) for b in blocks if b.type == "chart"]
         scores["chart_numeric"] = cm.chart_numeric(charts, item.expected_chart_values, percent_expected=True)
-        ref = set(item.reference_ids) | {loc["element_id"] for locs in store.locations(item.reference_ids).values()
-                                         for loc in locs}
-        cited = [{c.id} | {loc.element_id for loc in c.locations} for b in blocks for c in b.citations]
+        # a citation is right when it is a reference passage or on the same page as one (the drafted
+        # reference is a single passage; its neighbours on the page support the same point)
+        ref_locs = [loc for locs in store.locations(item.reference_ids).values() for loc in locs]
+        ref = set(item.reference_ids) | {loc["element_id"] for loc in ref_locs} \
+            | {f"{loc['source_file']}#p{loc['page']}" for loc in ref_locs if "page" in loc}
+        cited = [{c.id} | {loc.element_id for loc in c.locations} | {f"{loc.source_file}#p{loc.page}" for loc in c.locations}
+                 for b in blocks for c in b.citations]
         scores["citation_accuracy"] = (cm.citation_accuracy(cited, ref), {"cited": sorted(c.id for b in blocks
                                                                                           for c in b.citations)})
     scores["latency_s"] = (run.latency_ms / 1000, {})

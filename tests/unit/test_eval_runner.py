@@ -100,3 +100,26 @@ def test_summary_and_gate():
     assert not ok and "faithfulness" in failures[0]
     chart_miss = {**s, "metrics": {**s["metrics"], "chart_numeric": 0.9}}
     assert not gate(chart_miss, None, 0.03)[0]  # 100% metrics must stay at 100%
+
+
+def test_citations_on_the_reference_page_count_and_search_rankings_reach_the_judge(tmp_path):
+    neighbour = {"id": "d:text:2", "locations": [{"element_id": "d:p1:text:9", "source_file": "t.pdf", "page": 1,
+                                                  "bbox": [0, 0, 1, 1]}]}
+    blocks = [{"type": "text", "content": {"markdown": "x"}, "citations": [neighbour]}]
+
+    class Store:
+        def locations(self, ids):
+            return {"d:text:1": [{"element_id": "d:p1:text:1", "source_file": "t.pdf", "page": 1}]}
+
+    class M(FakeMetrics):
+        def context_precision(self, *a, **k):
+            self.rankings = k.get("rankings")
+            return 1.0, {}
+
+    m = M()
+    run = _run(blocks, [{"id": "d:text:1", "text": "a"}, {"id": "d:text:2", "text": "b"}],
+               tools=("search_text",))
+    run.tool_calls = [{"name": "search_text", "result_ids": ["d:text:2", "d:text:1"]}]
+    scores = score_item(ITEM.model_copy(update={"expected_chart_values": []}), run, m, Store(), tmp_path)
+    assert scores["citation_accuracy"][0] == 1.0  # same page as the reference passage
+    assert m.rankings == [["d:text:2", "d:text:1"]]
