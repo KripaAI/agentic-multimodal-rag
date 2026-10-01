@@ -87,3 +87,11 @@ def test_answers_do_not_depend_on_the_trace_viewer(cli_env, base_config, write_c
     r = _run(env, "profile")
     assert r.returncode == 0, r.stderr[-500:]
     assert time.monotonic() - t < 60
+
+
+def test_a_library_blocked_by_windows_points_to_the_docker_runner():
+    from mmrag.cli import _friendly_error
+
+    e = ImportError("DLL load failed while importing _tiktoken: An Application Control policy has blocked this file.")
+    msg = _friendly_error(e)
+    assert "Smart App Control" in msg and "docker compose run --rm ingest" in msg

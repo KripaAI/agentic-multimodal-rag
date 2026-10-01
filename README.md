@@ -64,6 +64,8 @@ mmrag ask "What does the RAG pipeline diagram show?"   # 4. ask (or use the chat
 
 A PDF without figures can skip step 2. `mmrag doc list | replace | remove` manages the library; see the [operations guide](docs/07-operations.md).
 
+If Windows Smart App Control blocks a library ("An Application Control policy has blocked this file"), run the ingestion command in Linux instead. Build once with `docker compose --profile tools build ingest`, then use for example `docker compose run --rm ingest ingest index "file.pdf"`.
+
 ## Parsing (Phase 1)
 
 ```

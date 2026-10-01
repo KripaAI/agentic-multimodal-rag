@@ -18,6 +18,16 @@ Each command touches one PDF only. The other PDFs are never re-processed.
 2. **Describe the figures on the GPU:** `mmrag caption bundle`, then `push`, `pull` and `import`, each followed by the file name.
 3. **Index it:** `mmrag ingest index "name.pdf"`.
 
+**On Windows with Smart App Control on,** indexing fails because Windows blocks the `tiktoken` library ("An Application Control policy has blocked this file"). Run ingestion commands in the Linux container instead. Your security setting stays on, and the project folder and database are shared with the container:
+
+```powershell
+docker compose --profile tools build ingest            # once (and after requirements.txt changes)
+docker compose run --rm ingest doc add data/new.pdf     # the path must be inside the project folder
+docker compose run --rm ingest ingest index "new.pdf"
+```
+
+Any `mmrag` command works after `docker compose run --rm ingest`. The chat app, search and `mmrag ask` don't need `tiktoken` and run on Windows as usual.
+
 **Replace is safe.** Search keeps answering from the old version until step 3 swaps the new one in, in a single database transaction. The old file is kept in `data/pdfs/replaced/`.
 
 **Remove** deletes the document and all its search data in one cascading delete. Its PDF moves to `data/pdfs/removed/`.

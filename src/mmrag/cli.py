@@ -801,6 +801,10 @@ def _friendly_error(e: Exception) -> str | None:
     from mmrag.llm import MissingApiKey
 
     name, text = type(e).__name__, str(e)
+    if isinstance(e, ImportError) and "Application Control policy" in text:
+        return ("Windows Smart App Control blocked a library this command needs. Run it in Linux instead: "
+                "docker compose run --rm ingest <the same command>, e.g. docker compose run --rm ingest "
+                "ingest index \"file.pdf\" (see docs/07-operations.md).")
     if isinstance(e, psycopg.OperationalError):
         return ("Cannot reach the database. Start it with `docker compose up -d` and check DATABASE_URL in .env.")
     if isinstance(e, MissingApiKey):
