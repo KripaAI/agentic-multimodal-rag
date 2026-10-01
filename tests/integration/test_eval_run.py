@@ -112,3 +112,15 @@ def test_the_cost_cap_stops_the_run(settings):
                    progress=lambda s: None, max_cost=0.015)
     assert not out.passed and "cost cap" in out.failures[0]
     assert out.summary["questions"] == 2 and out.summary["spent_usd"] == pytest.approx(0.02)
+
+
+def test_the_report_compares_a_run_with_the_baseline(settings):
+    """The Phase 9 question — did memory cost anything? — is read off this column."""
+    run_eval(settings, ITEMS, "v1", _ask_factory([]), Metrics(0.9), Store(), "gpt-5.4-mini", baseline=True,
+             label="memory off", progress=lambda s: None)
+    after = run_eval(settings, ITEMS, "v1", _ask_factory([]), Metrics(0.88), Store(), "gpt-5.4-mini",
+                     label="memory on", progress=lambda s: None)
+
+    page = write_report(settings, after.run_id).read_text(encoding="utf-8")
+    assert "vs baseline" in page and "memory off" in page  # which run it is compared against
+    assert "-0.02" in page and after.passed  # within eval.regression_tolerance (0.03)

@@ -159,4 +159,14 @@ The assistant keeps a few notes about each user — what they work on, how they 
 3. Open **What I remember**: the preference is listed. Delete it, ask again, and the preference is gone.
 4. `mmrag memory off <you>`, ask again: nothing is recalled and nothing new is stored.
 
-**Checking it costs nothing in quality.** Evaluation runs pass no user, so the Phase 6 baseline is measured with memory off. To compare with memory on, run the golden set through an account that has memories and check faithfulness and citation accuracy against the baseline (`eval/` and `docs/06-evaluation-results.md`).
+**Checking it costs nothing in quality.** Evaluation runs pass no user, so the Phase 6 baseline is measured with memory off. To measure memory on, use a throwaway account so no real user's memory is polluted:
+
+```powershell
+mmrag user add eval-memory@example.com
+mmrag memory add output_format "Prefers charts to tables." eval-memory@example.com
+mmrag memory add topic_focus "Is studying attention and KV caching." eval-memory@example.com
+mmrag eval run --as-user eval-memory@example.com --max-cost 1.50
+mmrag user delete eval-memory@example.com --yes
+```
+
+Seeding the notes by hand keeps the comparison deterministic, and it is the only reliable way: the golden set asks about documents, so a warm-up run (`--as-user … --warmup`, which stores without recalling) may legitimately extract nothing to measure. Seed the kinds of notes real use produces — a format preference and a topic focus. `--as-user` is refused together with `--baseline` — the baseline stays memory-off. The report's **vs baseline** column gives Δ per metric, and the regression gate fails the run if a gated metric falls more than `eval.regression_tolerance` below the baseline, so a passing run is the acceptance criterion met. Record the numbers in `docs/06-evaluation-results.md` §9.

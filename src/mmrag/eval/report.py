@@ -1,5 +1,10 @@
-"""Evaluation report (LLD §5.10 step 8): averages vs targets, per question type, the worst questions
-with the judge's reasons, and every question with links to its trace."""
+"""Evaluation report (LLD §5.10 step 8): averages vs targets and against the latest baseline,
+per question type, the worst questions with the judge's reasons, and every question with links
+to its trace.
+
+The baseline column is what answers "did this change cost us anything?" — a new prompt version,
+a search setting, or memory switched on (Phase 9).
+"""
 
 from __future__ import annotations
 
@@ -8,6 +13,7 @@ from html import escape
 from pathlib import Path
 
 from mmrag.config import Settings
+from mmrag.eval.runner import GATED
 
 # spec §9 targets (v1, provisional)
 TARGETS = {"faithfulness": 0.90, "multimodal_faithfulness": 0.85, "response_relevancy": 0.85,
@@ -43,6 +49,8 @@ def write_report(settings: Settings, run_id: str) -> Path:
             raise ValueError(f"no evaluation run {run_id}")
         rows = conn.execute("SELECT question_id, metric, score, details, trace_id FROM eval_results WHERE run_id = %s "
                             "ORDER BY question_id, metric", (run_id,)).fetchall()
+        prev = conn.execute("SELECT label, started_at, summary FROM eval_runs WHERE is_baseline AND run_id <> %s "
+                            "AND summary IS NOT NULL ORDER BY started_at DESC LIMIT 1", (run_id,)).fetchone()
     started, commit, agent_model, judge, version, is_baseline, label, summary, passed, trace = run
     summary = summary or {}
     endpoint = settings.observability.otlp_traces_endpoint or ""
@@ -55,11 +63,26 @@ def write_report(settings: Settings, run_id: str) -> Path:
         per_q[qid]["scores"][metric] = None if score is None else float(score)
         per_q[qid]["details"][metric] = details or {}
 
+    base_metrics = (prev[2] or {}).get("metrics", {}) if prev else {}
+    tolerance = settings.eval.regression_tolerance
+
+    def _delta(m: str, v) -> str:
+        """This run against the baseline: a drop beyond the tolerance is the regression gate."""
+        before = base_metrics.get(m)
+        if before is None or v is None or m not in GATED:
+            return '<td>–</td><td></td>'
+        d = float(v) - float(before)
+        cls = "bad" if d < -tolerance else "ok" if d >= 0 else ""
+        return f'<td>{_fmt(before)}</td><td class="{cls}">{d:+.2f}</td>'
+
     metric_rows = "".join(
         f"<tr><td>{escape(m)}</td><td>{_fmt(v)}</td><td>{_fmt(TARGETS.get(m))}</td>"
         f"<td class=\"{'ok' if m in TARGETS and v is not None and v >= TARGETS[m] else 'bad' if m in TARGETS else ''}\">"
-        f"{'meets' if m in TARGETS and v is not None and v >= TARGETS[m] else 'below' if m in TARGETS else ''}</td></tr>"
+        f"{'meets' if m in TARGETS and v is not None and v >= TARGETS[m] else 'below' if m in TARGETS else ''}</td>"
+        + _delta(m, v) + "</tr>"
         for m, v in summary.get("metrics", {}).items())
+    base_note = (f"baseline: {escape(str(prev[1])[:19])}" + (f" · {escape(prev[0])}" if prev[0] else "")
+                 if prev else "no baseline run yet")
     types = summary.get("by_type", {})
     cols = sorted({m for d in types.values() for m in d})
     type_rows = "".join(f"<tr><td>{escape(t)}</td>{''.join(f'<td>{_fmt(d.get(m))}</td>' for m in cols)}</tr>"
@@ -99,7 +122,8 @@ h1 {{ font-size:22px; margin:0; }} h2 {{ font-size:16px; margin:8px 0 4px; }} h3
 · median {_fmt(summary.get('median_latency_s'))} s (p90 {_fmt(summary.get('p90_latency_s'))} s)
 · median cost ${_fmt(summary.get('median_cost_usd'))} · total ${_fmt(summary.get('total_cost_usd'))} · {link(trace)}</p>
 {f'<section><h2>Gate failures</h2><ul>{failures}</ul></section>' if failures else ''}
-<h2>Metrics vs targets (spec §9)</h2><div class="wrap"><table><tr><th>metric</th><th>score</th><th>target</th><th></th></tr>{metric_rows}</table></div>
+<h2>Metrics vs targets (spec §9) and vs baseline</h2><p class="meta">{base_note} · a gated metric more than {tolerance} below the baseline fails the gate</p>
+<div class="wrap"><table><tr><th>metric</th><th>score</th><th>target</th><th></th><th>baseline</th><th>&Delta;</th></tr>{metric_rows}</table></div>
 <h2>By question type</h2><div class="wrap"><table><tr><th>type</th>{''.join(f'<th>{escape(m)}</th>' for m in cols)}</tr>{type_rows}</table></div>
 <h2>Five weakest questions, with the judge's reasons</h2>{worst_html}
 <h2>All questions</h2><div class="wrap"><table><tr><th>question</th>{''.join(f'<th>{escape(m)}</th>' for m in all_metrics)}<th></th></tr>{q_rows}</table></div>

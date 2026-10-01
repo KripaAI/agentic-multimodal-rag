@@ -207,6 +207,7 @@ All embeddings are computed **before** step 2, so the transaction holds no netwo
 | `user delete <email> --yes` | Deletes the account, its sessions and its memories; its questions stay in `query_log` with no user (Phase 9) |
 | `obs cleanup` | Deletes `query_log` and `auth_events` rows, and memories, older than their retention period |
 | `memory list <email>` | Everything remembered about one account, with its keys (Phase 9) |
+| `memory add <subject> <statement> <email>` | Writes one note by hand: seeding a test account for the evaluation, or an operator fix |
 | `memory delete <kind> <key> <email>` / `memory forget-all <email> --yes` | Deletes one memory, or all of them |
 | `memory on <email>` / `memory off <email>` | The user's own memory switch; off stops storing and recalling |
 | `memory summarize <email>` | Writes episode summaries for that account's finished conversations (run on a schedule) |

@@ -361,12 +361,17 @@
 - Controls (FR-25): `mmrag memory list|delete|forget-all|on|off`, a **What I remember** page in the UI, and
   `mmrag user delete`, which removes the account and its memories (the store has no foreign key to `users`,
   so memories are deleted explicitly). `obs cleanup` prunes memories past `memory.retention_days`.
-- Evaluation runs pass no `user_id`, so they are unaffected by memory; the comparison with memory on is run
-  against the Phase 6 baseline for the gate.
-- Tests: 32 unit (namespaces, the update rule, extraction limits, the P13 path through the graph), 17 integration
-  (Postgres store, isolation, retention, account deletion, the CLI controls, the UI memory page) and 3 `live` ones
-  for what no mock can show. Full suite: **423 unit and integration tests, all passing, with and without an
-  OpenAI key**.
+- Evaluation: runs pass no `user_id`, so the Phase 6 baseline stays the memory-off measurement.
+  `mmrag eval run --as-user <email>` answers the golden set with that user's memory on (refused together with
+  `--baseline`, and refused for an account that remembers nothing), and the report now has a **vs baseline**
+  column with Δ per metric. The test account's notes are seeded with `mmrag memory add`, because the golden set
+  asks about documents and so may legitimately produce no memories of its own. The regression gate then *is* acceptance criterion 5.
+  The numbers need two paid runs (about US$1 each) and the owner's budget approval; the procedure and an empty
+  results table are in `docs/06-evaluation-results.md` §9.
+- Tests: 32 unit (namespaces, the update rule, extraction limits, the P13 path through the graph), 22 integration
+  (Postgres store, isolation, retention, account deletion, the CLI controls, the UI memory page, the evaluation
+  guards and the baseline comparison) and 3 `live` ones for what no mock can show. Full suite: **428 unit and
+  integration tests, all passing, with and without an OpenAI key** (one seeding test skips without a key).
 
 **Acceptance criteria**
 - A preference stated in one conversation is applied in a later one.

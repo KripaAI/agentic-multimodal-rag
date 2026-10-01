@@ -493,6 +493,13 @@ def cmd_memory(settings: Settings, args: argparse.Namespace) -> int:
         return 0
 
     with memory.open_store(settings) as store:
+        if c == "add":
+            saved = memory.remember_statements(store, user_id, [(args.subject, args.statement)])
+            if not saved:
+                print("Nothing stored: a statement needs a subject and some text.", file=sys.stderr)
+                return 2
+            print(f"Stored semantic memory {saved[0].key}: {saved[0].text}")
+            return 0
         if c == "list":
             items = memory.list_memories(store, user_id)
             for m in items:
@@ -534,6 +541,42 @@ def _judge(settings: Settings):
         raise SystemExit("eval.judge_model is not set in config.yaml")
     return Metrics(OpenAIJudge(get_client(settings), settings.eval.judge_model, settings.embed.model,
                                settings.embed.dims))
+
+
+def _eval_with_memory(settings: Settings, args: argparse.Namespace):
+    """`eval run --as-user`: answer the golden set as one signed-in user, with their long-term
+    memory on (Phase 9 acceptance criterion: faithfulness and citation accuracy must not drop).
+
+    The baseline is always measured with memory off, so a baseline run may not use this. An
+    account whose memory is switched off is refused, and so is one that remembers nothing yet
+    (it would reproduce the baseline) unless `--warmup` says that is the point of the run.
+    """
+    from functools import partial
+
+    from mmrag import db, memory
+    from mmrag.agent.graph import run_query
+
+    if args.baseline:
+        raise SystemExit("--baseline measures the agent without memory; drop --as-user or --baseline")
+    if not settings.memory.enabled:
+        raise SystemExit("memory.enabled is false in config.yaml, so there is nothing to measure")
+    email = args.as_user.strip().lower()
+    with db.connect(settings) as conn:
+        row = conn.execute("SELECT user_id::text FROM users WHERE email = %s", (email,)).fetchone()
+    if row is None:
+        raise SystemExit(f"no account for {email} (see `mmrag user list`)")
+    user_id = row[0]
+    if not memory.is_enabled(settings, user_id):
+        raise SystemExit(f"memory is switched off for {email}; switch it on with `mmrag memory on {email}`")
+    with memory.open_store(settings) as store:
+        kept = memory.list_memories(store, user_id)
+    if not kept and not args.warmup:
+        raise SystemExit(f"{email} remembers nothing yet, so this would measure exactly the baseline. Fill the "
+                         f"memory first with one `--as-user {email} --warmup` run (each answer is remembered), "
+                         f"then run again without --warmup for the comparison.")
+    note = f"memory on ({email}, {len(kept)} memories)" if kept else f"memory warm-up ({email}, nothing recalled yet)"
+    print(f"{email} remembers {len(kept)} thing(s); this run recalls them and adds to them.")
+    return partial(run_query, user_id=user_id), note
 
 
 def cmd_eval(settings: Settings, args: argparse.Namespace) -> int:
@@ -588,6 +631,10 @@ def cmd_eval(settings: Settings, args: argparse.Namespace) -> int:
     from mmrag.eval.report import write_report
     from mmrag.eval.runner import run_eval
 
+    ask, memory_note = run_query, None
+    if args.as_user:
+        ask, memory_note = _eval_with_memory(settings, args)
+
     items, version = load_golden_set(golden)
     if args.only:
         wanted = set(args.only.split(","))
@@ -602,12 +649,13 @@ def cmd_eval(settings: Settings, args: argparse.Namespace) -> int:
     model = args.model or tuned.agent.model
     if model == tuned.eval.judge_model:
         raise SystemExit("the judge model must differ from the agent model (D14)")
+    label = " ".join(x for x in [label, memory_note] if x) if memory_note else label
     print(f"Evaluating {len(items)} questions (golden set {version}) with {model}; judge {tuned.eval.judge_model}"
-          + (f"; overrides {args.set}" if args.set else ""))
+          + (f"; overrides {args.set}" if args.set else "") + (f"; {memory_note}" if memory_note else ""))
     from mmrag.eval.runner import keep_awake
 
     with keep_awake():  # a laptop dozing off would freeze the run mid-question
-        out = run_eval(tuned, items, version, run_query, _judge(tuned), DbStore(tuned), model,
+        out = run_eval(tuned, items, version, ask, _judge(tuned), DbStore(tuned), model,
                        baseline=args.baseline, label=label, max_cost=args.max_cost)
     print(f"Spent ${out.summary.get('spent_usd', 0):.3f} (agent + judge)")
     print(f"\n{'PASSED' if out.passed else 'FAILED'} · run {out.run_id}")
@@ -803,6 +851,9 @@ def main(argv: list[str] | None = None) -> int:
     mem_parser = sub.add_parser("memory", help="see, delete and switch off long-term memory (Phase 9)")
     mem_sub = mem_parser.add_subparsers(dest="memory_command", required=True)
     mem_sub.add_parser("list", help="everything remembered about this account")
+    m_add = mem_sub.add_parser("add", help="write a note by hand (seeding a test account; an operator fix)")
+    m_add.add_argument("subject", help="the key it is stored under, e.g. output_format")
+    m_add.add_argument("statement", help="one short sentence about the user, e.g. 'Prefers charts to tables.'")
     m_del = mem_sub.add_parser("delete", help="delete one memory")
     m_del.add_argument("kind", choices=["semantic", "episodic"])
     m_del.add_argument("key", help="the key shown by `mmrag memory list`")
@@ -813,7 +864,7 @@ def main(argv: list[str] | None = None) -> int:
     m_sum = mem_sub.add_parser("summarize", help="summarise finished conversations (run on a schedule)")
     m_sum.add_argument("--idle-minutes", type=int, default=None,
                        help="a conversation counts as finished after this long (default: memory.idle_minutes)")
-    for name in ("list", "delete", "forget-all", "on", "off", "summarize"):
+    for name in ("list", "add", "delete", "forget-all", "on", "off", "summarize"):
         mem_sub.choices[name].add_argument("email", help="the account the memories belong to")
 
     eval_parser = sub.add_parser("eval", help="golden-set evaluation (Phase 6)")
@@ -831,6 +882,11 @@ def main(argv: list[str] | None = None) -> int:
     e_run.add_argument("--max-cost", type=float, help="stop the run once agent + judge spend reaches this many US$")
     e_run.add_argument("--set", action="append", metavar="SECTION.FIELD=VALUE",
                        help="override a setting for this run, e.g. search.rerank=true (repeatable; shown in the label)")
+    e_run.add_argument("--as-user", metavar="EMAIL",
+                       help="answer as this signed-in user, with their long-term memory on (Phase 9); "
+                            "the baseline stays memory-off")
+    e_run.add_argument("--warmup", action="store_true",
+                       help="with --as-user: allow a first run that only fills the memory")
     e_retr = eval_sub.add_parser("retrieval", help="search-only scores on the golden set (compare search settings)")
     e_retr.add_argument("--set", action="append", metavar="SECTION.FIELD=VALUE",
                         help="override a setting for this run, e.g. search.keyword_mode=any (repeatable)")

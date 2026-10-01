@@ -97,3 +97,33 @@ The full list, with reasons, is in `data/eval/spot_check.json` (local file).
 | After the top-up: combined "improved" run (40 questions) | 1.02 |
 | After the top-up: chart-question run with prompts v3 (8 questions) | 0.29 |
 | **After the top-up, total** | **≈ 2.23 of the US$3 cap** |
+
+---
+
+## 9. Memory on vs the baseline (Phase 9, acceptance criterion 5)
+
+**The claim to test:** switching long-term memory on does not lower faithfulness or citation accuracy. Memory personalises; it is never evidence (P13), so the scores should be flat.
+
+**Why the baseline is unaffected.** `mmrag eval run` passes no user, so memory is never recalled or stored in a normal run — the Phase 6 baseline above stands as the memory-off measurement.
+
+**Procedure** (about US$1 per 40-question run at the prices in §8, so budget for two):
+
+```powershell
+mmrag user add eval-memory@example.com           # a throwaway account, so no real user's memory is polluted
+mmrag memory add output_format "Prefers charts to tables." eval-memory@example.com
+mmrag memory add topic_focus "Is studying attention and KV caching." eval-memory@example.com
+mmrag eval run --as-user eval-memory@example.com --max-cost 1.50
+mmrag user delete eval-memory@example.com --yes  # removes the account and its memories
+```
+
+The notes are seeded by hand because the golden set asks about documents: a run that only stores (`--warmup`) may legitimately extract nothing, leaving nothing to measure. `--as-user` is refused together with `--baseline`: the baseline must stay memory-off. Note that the run also *adds* memories as it goes, so a repeat run is not identical — delete and re-seed the account to repeat it exactly. The report's **vs baseline** column shows Δ per metric, and the regression gate fails the run if a gated metric is more than `eval.regression_tolerance` (0.03) below the baseline — so a pass *is* the criterion met.
+
+**Result:** not yet run — it needs the owner's budget approval. Fill in below.
+
+| Metric | Baseline (§2, memory off) | Memory on | Δ | Within 0.03 |
+|---|---|---|---|---|
+| Faithfulness | 1.00 | | | |
+| Citation accuracy | 0.67 | | | |
+| Context precision | 0.88 | | | |
+| Factual correctness | 0.74 | | | |
+| Median cost per question | US$0.014 | | | recall adds one vector query; `remember` adds one cheap model call per answer |

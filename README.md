@@ -115,6 +115,7 @@ In the app, **What I remember** in the sidebar lists everything kept about you, 
 
 ```powershell
 mmrag memory list <email>                     # everything remembered, with its keys
+mmrag memory add output_format "Prefers charts to tables." <email>
 mmrag memory delete semantic output_format <email>
 mmrag memory forget-all <email> --yes
 mmrag memory off | on <email>                 # off stops storing and recalling
