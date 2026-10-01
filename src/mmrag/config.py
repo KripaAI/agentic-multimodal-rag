@@ -140,6 +140,13 @@ class Retention(_Section):
     auth_events_days: int = Field(ge=1)
 
 
+class Alerts(_Section):
+    daily_cost_usd: float = Field(default=5.0, gt=0)  # all users together, today (auth.limits_timezone)
+    dropped_rate: float = Field(default=0.3, ge=0, le=1)  # share of answers with removed parts, last hour
+    min_questions: int = Field(default=5, ge=1)  # ...counted only with at least this many questions
+    failed_sign_ins_per_hour: int = Field(default=20, ge=1)
+
+
 class Eval(_Section):
     golden_set: Path
     judge_model: str | None
@@ -164,6 +171,7 @@ class Settings(_Section):
     auth: Auth
     observability: Observability
     retention: Retention
+    alerts: Alerts = Alerts()
     eval: Eval
     pricing: dict[str, ModelPrice] = {}
     secrets: Secrets

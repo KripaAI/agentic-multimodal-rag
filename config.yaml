@@ -109,6 +109,12 @@ retention:
   query_log_days: 90
   auth_events_days: 365
 
+alerts:                              # mmrag obs alerts (run on a schedule; exit 1 when an alert fires)
+  daily_cost_usd: 5.00               # all users together, today
+  dropped_rate: 0.3                  # answers with removed (unverified) parts, last hour
+  min_questions: 5                   # ...only judged with at least this many questions
+  failed_sign_ins_per_hour: 20
+
 eval:
   golden_set: eval/golden_set.jsonl
   judge_model: gpt-4.1-mini          # D14: must differ from agent.model; owner chose -mini (5x cheaper) for budget, Phase 6

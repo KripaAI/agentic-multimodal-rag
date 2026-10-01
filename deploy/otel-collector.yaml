@@ -1,0 +1,42 @@
+# OpenTelemetry Collector for production (plan Phase 8 task 6, spec §7.7).
+# The app sends every span here (observability.otlp_traces_endpoint: http://127.0.0.1:4318/v1/traces,
+# sample_ratio: 1.0, capture_content: false); the collector batches them and keeps every error and
+# every slow trace, plus a 10% sample of the rest, and forwards them to Phoenix (or any OTLP backend).
+# If the collector or Phoenix is down, answers are not affected: the app exports in the background.
+
+receivers:
+  otlp:
+    protocols:
+      http:
+        endpoint: 127.0.0.1:4318
+
+processors:
+  memory_limiter:
+    check_interval: 1s
+    limit_mib: 256
+  tail_sampling:
+    decision_wait: 30s          # a question's spans arrive within this window
+    policies:
+      - name: errors
+        type: status_code
+        status_code: {status_codes: [ERROR]}
+      - name: slow
+        type: latency
+        latency: {threshold_ms: 20000}   # NFR-1 median target
+      - name: sample-rest
+        type: probabilistic
+        probabilistic: {sampling_percentage: 10}
+  batch:
+    send_batch_size: 512
+    timeout: 5s
+
+exporters:
+  otlphttp:
+    endpoint: http://127.0.0.1:6006   # Phoenix; it appends /v1/traces
+
+service:
+  pipelines:
+    traces:
+      receivers: [otlp]
+      processors: [memory_limiter, tail_sampling, batch]
+      exporters: [otlphttp]

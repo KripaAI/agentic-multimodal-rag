@@ -6,6 +6,8 @@ Answers questions over the PDFs in `data/pdfs/` with text, original figures, cha
 - [technical specification](docs/02-technical-specification.md)
 - [implementation plan](docs/03-implementation-plan.md)
 - [low-level design](docs/05-low-level-design.md)
+- [evaluation results](docs/06-evaluation-results.md)
+- [operations guide](docs/07-operations.md): backups, managing PDFs, accounts, alerts, HTTPS deployment
 
 ## Setup (Windows, Phase 0)
 
@@ -43,7 +45,26 @@ Requirements: Python 3.11, Docker Desktop.
    .venv\Scripts\mmrag models
    ```
 
-   Then set `agent.model`, `agent.summary_model` and `eval.judge_model` in `config.yaml`.
+   Then set `agent.model`, `agent.summary_model` and `eval.judge_model` in `config.yaml`. The defaults are `gpt-5.4-mini` for the agent and summaries, and `gpt-4.1-mini` for the evaluation judge. Prices go under `pricing`, so costs are reported.
+
+## From a PDF to answers
+
+Each PDF goes through four steps. Each step processes that PDF only:
+
+```
+mmrag doc add path\to\file.pdf          # 1. copy into data/pdfs/ and parse (prints a review sheet)
+mmrag caption bundle file.pdf           # 2. figure descriptions on a free Kaggle GPU
+mmrag caption push file.pdf             #    (needs KAGGLE_API_TOKEN in .env)
+mmrag caption status file.pdf           #    wait until it says COMPLETE
+mmrag caption pull file.pdf
+mmrag caption import file.pdf
+mmrag ingest index file.pdf             # 3. tables summarized, embedded, written to PostgreSQL
+mmrag ask "What does the RAG pipeline diagram show?"   # 4. ask (or use the chat app below)
+```
+
+A PDF without figures can skip step 2. `mmrag doc list | replace | remove` manages the library; see the [operations guide](docs/07-operations.md).
+
+If Windows Smart App Control blocks a library ("An Application Control policy has blocked this file"), run the ingestion command in Linux instead. Build once with `docker compose --profile tools build ingest`, then use for example `docker compose run --rm ingest ingest index "file.pdf"`.
 
 ## Parsing (Phase 1)
 
@@ -96,6 +117,9 @@ Development is test-driven where it fits (constitution W5, LLD §10). Install th
 | `.venv\Scripts\python -m pytest -m regression` | Re-parses the approved PDFs and compares with `tests/regression/snapshots/` (skipped if the PDFs are absent). After approving a detection change on the review sheet, refresh with `python -m tests.regression.snapshot` |
 | `.venv\Scripts\python -m pytest -m live` | Real OpenAI calls (costs a fraction of a cent); run on request |
 | `.venv\Scripts\python -m pytest --cov=mmrag` | With a coverage report |
+| `docker compose run --rm --entrypoint python ingest -m pytest -q` | The same suite in Linux, for when Windows Smart App Control blocks a library (`tiktoken`) locally |
+
+GitHub runs the suite on every push and pull request (`.github/workflows/tests.yml`).
 
 ## Layout
 

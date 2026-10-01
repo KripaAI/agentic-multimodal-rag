@@ -32,6 +32,21 @@ services:
     volumes:
       - phoenix_data:/mnt/data
 
+  ingest:
+    # Runs mmrag commands in Linux: Windows Smart App Control blocks tiktoken's native library,
+    # which indexing needs. Not started by `docker compose up`; use
+    #   docker compose run --rm ingest ingest index "file.pdf"
+    build: .
+    profiles: ["tools"]
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+    volumes:
+      - .:/app
+
 volumes:
   pgdata:
   phoenix_data:

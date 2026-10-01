@@ -1,0 +1,21 @@
+# HTTPS reverse proxy for the chat app (plan Phase 8 task 5, spec §7.6).
+# Caddy obtains and renews the TLS certificate automatically for the domain below.
+# Streamlit keeps listening on 127.0.0.1:8501 only; set auth.trust_proxy_headers: true so the
+# client IP for sign-in throttling comes from X-Forwarded-For (set by Caddy, not by the client).
+#
+#   Replace rag.example.com with your domain, point its DNS at this server, open ports 80 and 443,
+#   then: caddy run --config deploy/Caddyfile
+
+rag.example.com {
+	encode gzip
+	reverse_proxy 127.0.0.1:8501 {
+		header_up X-Forwarded-For {remote_host}
+	}
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Content-Type-Options "nosniff"
+		X-Frame-Options "DENY"
+		Referrer-Policy "no-referrer"
+		-Server
+	}
+}
