@@ -248,7 +248,8 @@ def cmd_obs(settings: Settings, args: argparse.Namespace) -> int:
         r = settings.retention
         if not args.yes:
             print(f"This deletes query history older than {r.query_log_days} days, sign-in events older than "
-                  f"{r.auth_events_days} days and old sessions. Re-run with --yes to confirm.")
+                  f"{r.auth_events_days} days, memories older than {settings.memory.retention_days} days "
+                  f"and old sessions. Re-run with --yes to confirm.")
             return 1
         for table, n in cleanup(settings).items():
             print(f"  {table:18} {n} deleted")
@@ -433,6 +434,14 @@ def cmd_user(settings: Settings, args: argparse.Namespace) -> int:
         for email, role, status, locked, last in service.list_users(settings):
             print(f"{email:32} {role:6} {status:9} {'LOCKED' if locked else '':7} last sign-in {last or '-'}")
         return 0
+    if c == "delete":
+        email = args.email.strip().lower()
+        if not args.yes:
+            print(f"This deletes the account {email}, its sessions and everything it remembers. "
+                  f"Its questions stay in the history without a user. Re-run with --yes to confirm.")
+            return 1
+        print(f"Deleted {email} and {service.delete_user(settings, email)['memories']} memories.")
+        return 0
     if c in ("add", "reset-password"):
         temp = service.add_user(settings, args.email, role=args.role) if c == "add" \
             else service.reset_password(settings, args.email)
@@ -442,6 +451,77 @@ def cmd_user(settings: Settings, args: argparse.Namespace) -> int:
     {"disable": service.disable, "enable": service.enable, "unlock": service.unlock}[c](settings, args.email)
     print(f"{c}d {args.email.strip().lower()}" if c != "unlock" else f"unlocked {args.email.strip().lower()}")
     return 0
+
+
+# ---------------------------------------------------------------- memory (Phase 9)
+
+def _memory_llm(settings: Settings):
+    """The low-cost extractor used for statements and episode summaries."""
+    from mmrag.agent.llm import OpenAILLM
+    from mmrag.llm import get_client
+
+    model = settings.memory.model or settings.agent.summary_model or settings.agent.model
+    if not model:
+        raise SystemExit("memory.model is not set in config.yaml")
+    return OpenAILLM(get_client(settings), model)
+
+
+def cmd_memory(settings: Settings, args: argparse.Namespace) -> int:
+    """See, delete and switch off what the assistant remembers about a user (FR-25).
+
+    Memory is per user, so every command takes an email. Nothing here is evidence: these notes
+    only shape how a question is understood and how an answer is presented (P13).
+    """
+    from mmrag import db, memory
+
+    if not settings.memory.enabled:
+        print("Memory is switched off for the whole application (memory.enabled in config.yaml).")
+        return 1
+    with db.connect(settings) as conn:
+        row = conn.execute("SELECT user_id::text, memory_enabled FROM users WHERE email = %s",
+                           (args.email.strip().lower(),)).fetchone()
+    if row is None:
+        print(f"No account for {args.email.strip().lower()} (see `mmrag user list`).", file=sys.stderr)
+        return 2
+    user_id, enabled = row
+    c = args.memory_command
+
+    if c in ("on", "off"):
+        memory.set_enabled(settings, user_id, c == "on")
+        print(f"Memory switched {c} for {args.email.strip().lower()}."
+              + ("" if c == "on" else " Nothing more is stored or recalled; use `forget-all` to delete what is kept."))
+        return 0
+
+    with memory.open_store(settings) as store:
+        if c == "list":
+            items = memory.list_memories(store, user_id)
+            for m in items:
+                when = (m.updated_at or "")[:16].replace("T", " ")
+                print(f"{m.kind:9} {m.key:28} {when:16} {m.text}")
+            print(f"\n{len(items)} memories for {args.email.strip().lower()}"
+                  f" (memory is {'on' if enabled else 'OFF'} for this account)")
+            return 0
+        if c == "delete":
+            if not any(m.key == args.key for m in memory.list_memories(store, user_id, args.kind)):
+                print(f"No {args.kind} memory with key {args.key!r} (see `mmrag memory list`).", file=sys.stderr)
+                return 2
+            memory.delete(store, user_id, args.kind, args.key)
+            print(f"Deleted {args.kind} memory {args.key}.")
+            return 0
+        if c == "forget-all":
+            if not args.yes:
+                print("This deletes every memory of this account. Re-run with --yes to confirm.")
+                return 1
+            print(f"Deleted {memory.forget_all(store, user_id)} memories.")
+            return 0
+        # summarize: write the episode summaries of this account's finished conversations
+        from mmrag.memory.episodes import summarize_idle
+
+        written = summarize_idle(settings, store, _memory_llm(settings), args.idle_minutes, user_id)
+        for m in written:
+            print(f"{m.key:28} {m.text}")
+        print(f"{len(written)} conversation(s) summarised.")
+        return 0
 
 
 # ---------------------------------------------------------------- eval (Phase 6)
@@ -713,10 +793,29 @@ def main(argv: list[str] | None = None) -> int:
         user_sub.add_parser(name, help=helptext)
     for name in ("add", "reset-password", "disable", "enable", "unlock"):
         user_sub.choices[name].add_argument("email")
+    u_del = user_sub.add_parser("delete", help="delete an account, its sessions and its memories")
+    u_del.add_argument("email")
+    u_del.add_argument("--yes", action="store_true", help="confirm the deletion")
     user_sub.add_parser("list", help="email, role, status, lockout, last sign-in")
     u_ev = user_sub.add_parser("events", help="sign-in audit log (newest first) with a summary")
     u_ev.add_argument("--days", type=int, default=7)
     u_ev.add_argument("--limit", type=int, default=50, help="rows to print")
+    mem_parser = sub.add_parser("memory", help="see, delete and switch off long-term memory (Phase 9)")
+    mem_sub = mem_parser.add_subparsers(dest="memory_command", required=True)
+    mem_sub.add_parser("list", help="everything remembered about this account")
+    m_del = mem_sub.add_parser("delete", help="delete one memory")
+    m_del.add_argument("kind", choices=["semantic", "episodic"])
+    m_del.add_argument("key", help="the key shown by `mmrag memory list`")
+    m_all = mem_sub.add_parser("forget-all", help="delete every memory of this account")
+    m_all.add_argument("--yes", action="store_true", help="confirm the deletion")
+    mem_sub.add_parser("on", help="switch memory on for this account")
+    mem_sub.add_parser("off", help="switch memory off (stops storing and recalling)")
+    m_sum = mem_sub.add_parser("summarize", help="summarise finished conversations (run on a schedule)")
+    m_sum.add_argument("--idle-minutes", type=int, default=None,
+                       help="a conversation counts as finished after this long (default: memory.idle_minutes)")
+    for name in ("list", "delete", "forget-all", "on", "off", "summarize"):
+        mem_sub.choices[name].add_argument("email", help="the account the memories belong to")
+
     eval_parser = sub.add_parser("eval", help="golden-set evaluation (Phase 6)")
     eval_sub = eval_parser.add_subparsers(dest="eval_command", required=True)
     e_draft = eval_sub.add_parser("draft-questions", help="draft candidate golden questions for review")
@@ -781,6 +880,7 @@ def main(argv: list[str] | None = None) -> int:
         "user": cmd_user,
         "doc": cmd_doc,
         "obs": cmd_obs,
+        "memory": cmd_memory,
     }
     try:
         return handlers[args.command](settings, args)

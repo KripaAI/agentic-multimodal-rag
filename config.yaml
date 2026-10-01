@@ -70,6 +70,14 @@ agent:
   tool_timeout_s: 30                # per tool call
   max_parallel_tools: 6             # tool calls run at once in one round
 
+memory:                              # long-term memory (Phase 9, spec §7.8); never evidence (P13)
+  enabled: true                      # master switch; each user can also switch their own off
+  model: gpt-5.4-mini                # low-cost extractor for statements and episode summaries
+  recall_k: 5                        # memories passed to the planner
+  retention_days: 365
+  max_statement_chars: 200
+  idle_minutes: 60                   # a thread with no new question for this long is summarised
+
 # US$ per 1M tokens, per model, for query_log.cost_usd. Owner fills these in from OpenAI's
 # pricing page; a model left out is logged with cost null (tokens are always logged).
 # Standard (not batch) prices from developers.openai.com/api/docs/pricing, read 2026-09-29.

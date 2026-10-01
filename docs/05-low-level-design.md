@@ -1,6 +1,6 @@
 # Low-Level Design — Agentic Multimodal RAG
 
-**Status:** Draft v0.7 · **Date:** 2026-09-29 · **Implements:** [02-technical-specification.md](02-technical-specification.md) v0.9 · **Governed by:** [01-constitution.md](01-constitution.md) · **Diagram:** `docs/06-lld-diagram.pdf` (local copy, not in git)
+**Status:** Draft v0.8 · **Date:** 2026-10-01 · **Implements:** [02-technical-specification.md](02-technical-specification.md) v0.9 · **Governed by:** [01-constitution.md](01-constitution.md) · **Diagram:** `docs/06-lld-diagram.pdf` (local copy, not in git)
 
 The high-level design (what the components are and how data flows) is in spec §3 and in `docs/04-flow-diagram.pdf` (local copy, not in git). This document is the **low-level design**: modules, functions and their contracts, database tables, algorithms, error handling and tests. It is what a developer implements from.
 
@@ -102,6 +102,9 @@ All tunable values live in `config.yaml`. Secrets live only in `.env`.
 | `eval.regression_tolerance` | 0.03 (per RAGAS metric) | regression gate |
 | `memory.enabled` / `memory.retention_days` | true / 365 (Phase 9) | long-term memory (§5.11); users can switch it off |
 | `memory.recall_k` | 5 (Phase 9) | memories passed to the planner |
+| `memory.model` | `gpt-5.4-mini` (Phase 9) | the low-cost model that extracts statements and episode summaries |
+| `memory.max_statement_chars` | 200 (Phase 9) | a statement longer than this is dropped, whatever the model returns |
+| `memory.idle_minutes` | 60 (Phase 9) | a conversation with no new question for this long counts as finished (§5.11) |
 
 **Secrets (`.env`):** `OPENAI_API_KEY`, `DATABASE_URL`.
 
@@ -201,7 +204,12 @@ All embeddings are computed **before** step 2, so the transaction holds no netwo
 | `user disable <email>` / `user enable <email>` | A disabled user cannot sign in; their sessions are revoked |
 | `user unlock <email>` | Clears a lockout |
 | `user list` | Email, role, status, last sign-in |
-| `obs cleanup` | Deletes `query_log` and `auth_events` rows older than their retention period |
+| `user delete <email> --yes` | Deletes the account, its sessions and its memories; its questions stay in `query_log` with no user (Phase 9) |
+| `obs cleanup` | Deletes `query_log` and `auth_events` rows, and memories, older than their retention period |
+| `memory list <email>` | Everything remembered about one account, with its keys (Phase 9) |
+| `memory delete <kind> <key> <email>` / `memory forget-all <email> --yes` | Deletes one memory, or all of them |
+| `memory on <email>` / `memory off <email>` | The user's own memory switch; off stops storing and recalling |
+| `memory summarize <email>` | Writes episode summaries for that account's finished conversations (run on a schedule) |
 | `eval draft-questions` | Drafts candidate questions with RAGAS's test-set generator into `eval/drafts.jsonl` for owner review; never writes to the golden set |
 | `eval run [--baseline]` | Runs the full evaluation (§5.10); `--baseline` stores the run as the new baseline; exits non-zero on regression |
 | `eval report <run_id>` | Writes the report for a run |
@@ -313,6 +321,7 @@ All embeddings are computed **before** step 2, so the transaction holds no netwo
 | `role` | text | `admin` · `user` |
 | `status` | text | `active` · `disabled` |
 | `must_change_password` | boolean | |
+| `memory_enabled` | boolean | default true; the user's own memory switch (FR-25, Phase 9) |
 | `failed_attempts` | int | reset on successful sign-in |
 | `locked_until` | timestamptz | nullable |
 | `created_at`, `last_login_at` | timestamptz | |
@@ -409,14 +418,14 @@ The whole request runs inside **one OpenTelemetry trace** (§5.9); each step bel
 
 | Node | Does | Next |
 |---|---|---|
-| `recall_memory` | (Phase 9) the user's top memories by meaning, as user context | `plan` |
+| `recall_memory` | the user's top memories by meaning, as context about the user, never evidence (§5.11) | `plan` |
 | `plan` | classify `qtype`, set `round_limit` | `agent` |
 | `agent` | one OpenAI call with the tool schemas; may return several tool calls | `tools` if tool calls and `round < round_limit`, else `compose` |
 | `tools` | run the calls in parallel (thread pool, per-call timeout), add results to `messages` and `ledger` | `agent` |
 | `compose` | OpenAI structured output: the Answer JSON (spec §5.4); at the round limit, told to state what is missing | `validate` |
 | `validate` | §5.6; hydrates citations | END if ok, `repair` if failed and not yet repaired, else END with failing blocks dropped and a notice |
 | `repair` | one compose turn given the validator's failures | `validate` |
-| `remember` | (Phase 9) extract memories after a validated answer | END |
+| `remember` | after a validated answer with nothing removed, keep what it says about the user (§5.11) | END |
 
 **Rules:** nodes call the OpenAI SDK directly (no LangChain chat models, no prebuilt agents); tools are plain functions from `agent/tools.py`; each node is also an OpenTelemetry span (§5.9); the LangGraph version is pinned. The checkpointer is LangGraph's Postgres saver on the project database; `thread_id` is recorded in `query_log`.
 
@@ -656,16 +665,53 @@ The file is validated on load.
 
 ### 5.11 Long-term memory (`mmrag/memory/`, Phase 9)
 
+**Storage.** LangGraph's `PostgresStore` on the project database, with a pgvector index over the
+`text` field using `embed.model` (D15). One namespace per user and kind:
+`("memories", user_id, "semantic")` and `("memories", user_id, "episodic")`. `namespace()`
+refuses an empty user id, so no query can ever run without one (NFR-13). The `store` table is
+created by `PostgresStore.setup()`; migration `0006` adds only `users.memory_enabled`.
+The embedder is built on **first use**, so listing and deleting memories need no OpenAI key.
+
 | Function | Behaviour |
 |---|---|
-| `extract_semantic(user_id, turn)` | Low-cost model returns short statements about the user (preferences, focus, expertise), each with a subject key; a statement with an existing key replaces it. |
-| `summarize_episode(thread)` | At thread end or idle timeout: what was asked, found and left open, in a few sentences. |
-| `recall(user_id, question, k)` | Semantic search in the user's namespaces (`memories/{user_id}/semantic`, `…/episodic`); returns statements with ids and dates. |
-| `list / delete / set_enabled` | User controls (FR-25); `delete_user` removes the namespaces. |
+| `open_store(settings)` | Context manager over the store; yields `None` when `memory.enabled` is false, so callers need no branch. |
+| `is_enabled` / `set_enabled` | The config switch and the user's own switch, both (FR-25). |
+| `recall(store, user_id, question, k)` | Semantic matches first, then up to `k // 2` episodes. Returns `[]` on any failure. |
+| `list_memories` / `delete` / `forget_all` | The user's view and controls over what is kept. |
+| `extract_semantic(llm, question, answer, existing)` | `memory.model` returns `(subject, statement)` pairs; see the rules below. |
+| `summarize_episode(llm, turns)` | Two or three sentences about a finished conversation. |
+| `MemorySession` | What the agent holds: `recall(question)` and `remember(question, answer_text)`, both of which swallow their own failures. |
+| `delete_user_memories` / `cleanup_expired` | Account deletion and `memory.retention_days`, both in plain SQL on `store.prefix`. |
 
-- **Storage:** LangGraph Store on PostgreSQL with pgvector, using `embed.model` (D15).
-- **Use:** recalled memories enter the plan and compose prompts in a section labelled as user context, with the instruction that they are not evidence (P13). The validator rejects citations that are not corpus `element_id`/`chunk_id`s.
-- **Retention:** `memory.retention_days` in config; `obs cleanup` also prunes expired memories.
+**The update rule.** The subject is the key, lower-cased with spaces replaced, so a new statement
+about a subject **replaces** the old one and `created_at` is carried over. Episodes are keyed by
+`thread_id`, so the sweep is idempotent.
+
+**What a memory may contain (P13).** The prompt asks only for durable facts and preferences about
+the *user*, never document content. `_clean` then enforces what a prompt cannot: a statement
+longer than `memory.max_statement_chars` is dropped, as is any statement containing a citation id
+(`d:text:12`, `p3:table:1`) — the sign that document content is trying to re-enter as a memory.
+Episode summaries have ids stripped.
+
+**Use.** `recall_memory` runs before `plan` and puts the notes into a system message headed
+*context about the user, not evidence*, each with its `memory:` id. `remember` runs after `finish`,
+and only for an answer that passed validation with no removed parts and no `not_found`. Because
+every memory carries a `memory:` id, an answer that cites one is caught by the validator (§5.6),
+which repairs it or drops the block — the rule needs no separate check.
+
+**Episodes.** A conversation has no end event, so a thread counts as finished once `query_log`
+shows no new question for `memory.idle_minutes`. `mmrag memory summarize`, run on a schedule,
+summarises the finished threads whose summary is missing or older than their last turn.
+
+**Failure safety.** Memory is never on the critical path: a store that is down, an extractor that
+is rate-limited or a malformed note is logged and skipped, and the question is answered without
+memory. Evaluation runs pass no `user_id`, so scores are measured with memory off.
+
+**Privacy and retention (NFR-13).** Per-user namespaces; spans record only how many memories were
+recalled, never their text; memory text reaches traces only through the prompts, which are
+captured solely when `observability.capture_content` is on (dev); `obs cleanup` deletes memories
+past `memory.retention_days`; `mmrag user delete` removes an account's memories explicitly,
+because the store has no foreign key to `users`.
 
 ---
 
@@ -811,4 +857,5 @@ Traces, JSON logs and metrics use OpenTelemetry (§5.9). The records below are k
 | 0.4 | 2026-09-26 | OpenTelemetry observability: `obs/` modules (§1); `observability.*` and `retention.*` config (§2); `obs cleanup` command (§3.9); `query_log.trace_id` (§4); new §5.9 (setup, span tree, other traces, metrics, content capture, correlation, export, retention, failure safety); error, logging, security, test and traceability updates. |
 | 0.5 | 2026-09-26 | RAGAS evaluation: `eval/` modules (§1); `eval.*` config (§2); `eval` CLI commands (§3.9); `eval_runs` and `eval_results` tables (§4); new §5.10 (golden set, run steps, RAGAS samples and metrics, custom metrics, regression gate, report, judge reliability); regression test and traceability updates. |
 | 0.6 | 2026-09-27 | §10 testing strategy and tooling (TDD where it fits, frozen regression tests, mocked OpenAI, `mmrag_test` database, pytest markers, CI), following constitution W5. |
+| 0.8 | 2026-10-01 | Long-term memory built (Phase 9): §5.11 rewritten to the implemented functions (namespaces, update rule, idle-thread episodes, lazy embedder, failure safety); `memory.model` / `max_statement_chars` / `idle_minutes` config (§2); `memory` and `user delete` commands (§3.9); `users.memory_enabled` and the library-owned `store` table (§4); `recall_memory` / `remember` wired into the graph (§5.2). |
 | 0.7 | 2026-09-29 | Agent on LangGraph (D3): `agent/graph.py` replaces `agent/loop.py` (§1, §5.1, §5.2 state, nodes and edges, checkpointer). Long-term memory module and §5.11 (Phase 9). §3.5 and §4: `element_links` for figures and tables, similarity-checked rule 3. §5.4: related items. Tools stay in-process; no MCP (D16). Traceability for FR-23–25 and NFR-13. |

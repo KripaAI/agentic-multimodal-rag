@@ -347,6 +347,27 @@
 8. **Evaluation:** RAGAS faithfulness unchanged with memory on; a small follow-up set checks that memory resolves references ("the chart you showed me last week") and preferences.
 9. **Tests (W5), test-first:** extraction and update rules, namespace isolation between users, deletion, the P13 validator rule, recall on a mocked store.
 
+**How it was built** (code, 2026-10-01; the acceptance criteria below are the gate)
+- `mmrag/memory/`: the LangGraph Postgres Store (`memories/{user_id}/{semantic,episodic}`), extraction with a
+  low-cost model, and the controls. The embedder is built on first use, so *seeing and deleting* memories never
+  needs an API key.
+- `recall_memory` and `remember` wrap the graph (`agent/graph.py`). Recalled notes go in as a system message
+  labelled *context about the user, not evidence*, each with a `memory:` id — the id the validator already
+  refuses, so an answer that cites one is repaired or has that block removed.
+- Nothing about memory can cost a user an answer: every recall and write is wrapped, and a failure is logged
+  and skipped.
+- Episodes: a conversation counts as finished after `memory.idle_minutes`; `mmrag memory summarize` (scheduled)
+  writes one summary per finished thread, keyed by thread id, so re-running it is harmless.
+- Controls (FR-25): `mmrag memory list|delete|forget-all|on|off`, a **What I remember** page in the UI, and
+  `mmrag user delete`, which removes the account and its memories (the store has no foreign key to `users`,
+  so memories are deleted explicitly). `obs cleanup` prunes memories past `memory.retention_days`.
+- Evaluation runs pass no `user_id`, so they are unaffected by memory; the comparison with memory on is run
+  against the Phase 6 baseline for the gate.
+- Tests: 32 unit (namespaces, the update rule, extraction limits, the P13 path through the graph), 17 integration
+  (Postgres store, isolation, retention, account deletion, the CLI controls, the UI memory page) and 3 `live` ones
+  for what no mock can show. Full suite: **423 unit and integration tests, all passing, with and without an
+  OpenAI key**.
+
 **Acceptance criteria**
 - A preference stated in one conversation is applied in a later one.
 - A follow-up that refers to an earlier conversation is understood.
@@ -384,4 +405,4 @@
 
 ## Next step
 
-Phases 0–3 are complete. Next: the owner approves the **Phase 4** plan (LangGraph agent, chart engine, validator, answer rendering, agent model comparison).
+Phases 0–8 are complete and Phase 9 is built. Next: the **Phase 9 gate** — the owner runs the demo in `docs/07-operations.md` (a preference stated in one conversation applied in the next, the memory page, deletion) and the evaluation comparison with memory on, then signs off.

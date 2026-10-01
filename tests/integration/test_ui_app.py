@@ -107,3 +107,27 @@ def test_signing_in_through_the_form_opens_the_chat(settings):
     at.text_input[1].input(PW)
     at.button[0].click().run()
     assert not at.exception and len(at.chat_input) == 1 and "token" in at.session_state
+
+
+def test_the_memory_page_lists_deletes_and_switches_off(settings):
+    """The user's own controls over memory (FR-25, plan Phase 9 task 6)."""
+    from mmrag import memory
+
+    token = _signed_in(settings)
+    user = service.require_user(settings, token)
+    with memory.open_store(settings, embed=lambda texts: [[0.0] * settings.embed.dims for _ in texts]) as store:
+        memory.remember_statements(store, user.user_id, [("output_format", "Prefers charts to tables.")])
+
+    at = AppTest.from_file(APP, default_timeout=30)
+    at.session_state["token"] = token
+    at.session_state["view"] = "memory"
+    at.run()
+    assert not at.exception
+    assert any("Prefers charts to tables." in m.value for m in at.markdown)
+
+    next(b for b in at.button if b.label == "Delete").click().run()
+    assert not any("Prefers charts to tables." in m.value for m in at.markdown)
+
+    at.toggle[0].set_value(False).run()  # "Remember me between conversations"
+    assert not memory.is_enabled(settings, user.user_id)
+    assert any("Memory is off" in w.value for w in at.warning)

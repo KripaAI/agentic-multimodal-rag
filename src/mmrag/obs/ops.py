@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
-from mmrag import db
+from mmrag import db, memory
 from mmrag.config import Settings
 
 SESSION_KEEP_DAYS = 30  # expired or revoked sessions are deleted this long after they ended
@@ -31,6 +31,7 @@ def cleanup(settings: Settings) -> dict[str, int]:
                 counts[table] = conn.execute(
                     f"DELETE FROM {table} WHERE thread_id NOT IN (SELECT DISTINCT thread_id FROM query_log)").rowcount
         conn.commit()
+    counts["memories"] = memory.cleanup_expired(settings)  # Phase 9: memory.retention_days (NFR-13)
     return counts
 
 
