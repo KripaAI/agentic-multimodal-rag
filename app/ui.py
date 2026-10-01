@@ -103,7 +103,7 @@ def render_answer(answer: dict, key: str, settings: Settings) -> None:
 
             if b.get("approximate"):
                 st.caption("⚠️ Approximate: some values are estimated from a figure.")
-            st.plotly_chart(pio.from_json(json.dumps(c["spec"])), key=f"{k}-chart", use_container_width=True)
+            st.plotly_chart(pio.from_json(json.dumps(c["spec"])), key=f"{k}-chart", width="stretch")
             for note in c.get("notes") or []:
                 st.caption(note)
             table = c.get("data_table") or []
@@ -134,7 +134,7 @@ def source_panel(settings: Settings) -> None:
         st.error("The PDF is not available on this server.")
         return
     st.image(_page_png(str(pdf), src["page"], tuple(tuple(b) for b in src["bboxes"]), settings.ui.page_dpi),
-             use_container_width=True)
+             width="stretch")
 
 
 # ---------------------------------------------------------------- chat
@@ -171,7 +171,7 @@ def sidebar(settings: Settings, user: service.User) -> None:
 
     with st.sidebar:
         st.markdown(f"**{user.email}**" + (" · admin" if user.is_admin else ""))
-        if st.button("➕ New conversation", use_container_width=True):
+        if st.button("➕ New conversation", width="stretch"):
             for k in ("thread_id", "chat_history", "source"):
                 st.session_state.pop(k, None)
             st.session_state.pop("view", None)
@@ -179,7 +179,7 @@ def sidebar(settings: Settings, user: service.User) -> None:
         st.subheader("Conversations")
         for t in user_threads(settings, user.user_id, limit=20):
             label = (t.title[:38] + "…") if len(t.title) > 38 else t.title
-            if st.button(label, key=f"thread-{t.thread_id}", use_container_width=True,
+            if st.button(label, key=f"thread-{t.thread_id}", width="stretch",
                          type="primary" if t.thread_id == st.session_state.get("thread_id") else "secondary"):
                 st.session_state["thread_id"] = t.thread_id
                 st.session_state["chat_history"] = [
@@ -194,13 +194,13 @@ def sidebar(settings: Settings, user: service.User) -> None:
         st.caption(f"Today: {n}/{a.daily_question_limit} questions · ${cost:.3f}/${a.daily_cost_limit_usd:.2f}")
         st.caption(f"This session: ${st.session_state.get('session_cost', 0.0):.4f} · "
                    f"{st.session_state.get('session_tokens', 0):,} tokens")
-        if user.is_admin and st.button("📊 Admin metrics", use_container_width=True):
+        if user.is_admin and st.button("📊 Admin metrics", width="stretch"):
             st.session_state["view"] = "admin"
             st.rerun()
-        if st.button("Change password", use_container_width=True):
+        if st.button("Change password", width="stretch"):
             st.session_state["view"] = "password"
             st.rerun()
-        if st.button("Sign out", use_container_width=True):
+        if st.button("Sign out", width="stretch"):
             service.logout(settings, st.session_state.get("token"))
             st.session_state.clear()
             st.rerun()

@@ -1,0 +1,8 @@
+# Streamlit server settings (spec §7.6: listen on localhost only; HTTPS comes from a reverse proxy).
+[server]
+address = "127.0.0.1"
+port = 8501
+headless = true
+
+[browser]
+gatherUsageStats = false

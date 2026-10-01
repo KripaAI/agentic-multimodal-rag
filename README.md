@@ -65,6 +65,26 @@ Requirements: Python 3.11, Docker Desktop.
 
 Detection thresholds are in `config.yaml` under `parse:`.
 
+## The chat app (Phase 7)
+
+```powershell
+python scripts/fetch_common_passwords.py      # once: the password blocklist (kept local)
+mmrag db migrate                              # users, sessions, auth_events
+mmrag user add you@example.com --role admin   # prints a temporary password once
+streamlit run app/ui.py                       # http://127.0.0.1:8501 (localhost only)
+```
+
+At the first sign-in you choose your own password (at least 12 characters, not a common one).
+
+Accounts are managed from the command line only:
+
+```powershell
+mmrag user add | reset-password | disable | enable | unlock <email>
+mmrag user list
+```
+
+Daily limits per user (questions and US$) are set in `config.yaml`, under `auth`. For production, serve the app over HTTPS behind a reverse proxy.
+
 ## Tests
 
 Development is test-driven where it fits (constitution W5, LLD §10). Install the test tools with `pip install -r requirements-dev.txt`.
