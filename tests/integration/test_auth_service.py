@@ -151,3 +151,12 @@ def test_every_attempt_is_audited(user):
     service.login(user, "alice@example.com", PW, "10.0.0.13")
     events = [r[0] for r in _sql(user, "SELECT event_type FROM auth_events WHERE ip = '10.0.0.13' ORDER BY event_id")]
     assert events == ["login_failure", "login_success"]
+
+
+def test_recent_audit_events_can_be_reviewed(user):
+    service.login(user, "alice@example.com", "wrong password here", "10.0.0.14")
+    events = service.recent_events(user, days=1)
+    kinds = [e[1] for e in events]
+    assert "login_failure" in kinds and "user_created" in kinds
+    assert all(e[0] is not None for e in events)  # time first, newest first
+    assert events == sorted(events, key=lambda e: e[0], reverse=True)

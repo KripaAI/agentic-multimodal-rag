@@ -232,6 +232,14 @@ def unlock(settings: Settings, email: str) -> None:
         conn.commit()
 
 
+def recent_events(settings: Settings, days: int = 7) -> list[tuple]:
+    """(time, event, email attempted, ip) newest first, for the sign-in audit review."""
+    with db.connect(settings) as conn:
+        return conn.execute("SELECT created_at, event_type, email_attempted, host(ip) FROM auth_events "
+                            "WHERE created_at > now() - make_interval(days => %s) ORDER BY created_at DESC, "
+                            "event_id DESC", (days,)).fetchall()
+
+
 def list_users(settings: Settings) -> list[tuple]:
     with db.connect(settings) as conn:
         return conn.execute("SELECT email, role, status, locked_until > now(), last_login_at FROM users "

@@ -420,6 +420,15 @@ def cmd_user(settings: Settings, args: argparse.Namespace) -> int:
     from mmrag.auth import service
 
     c = args.user_command
+    if c == "events":
+        from collections import Counter
+
+        events = service.recent_events(settings, args.days)
+        for when, kind, email, ip in events[:args.limit]:
+            print(f"{when:%Y-%m-%d %H:%M}  {kind:16} {email or '-':32} {ip or '-'}")
+        print(f"\n{len(events)} events in {args.days} days: "
+              + ", ".join(f"{k} {n}" for k, n in Counter(e[1] for e in events).most_common()))
+        return 0
     if c == "list":
         for email, role, status, locked, last in service.list_users(settings):
             print(f"{email:32} {role:6} {status:9} {'LOCKED' if locked else '':7} last sign-in {last or '-'}")
@@ -705,6 +714,9 @@ def main(argv: list[str] | None = None) -> int:
     for name in ("add", "reset-password", "disable", "enable", "unlock"):
         user_sub.choices[name].add_argument("email")
     user_sub.add_parser("list", help="email, role, status, lockout, last sign-in")
+    u_ev = user_sub.add_parser("events", help="sign-in audit log (newest first) with a summary")
+    u_ev.add_argument("--days", type=int, default=7)
+    u_ev.add_argument("--limit", type=int, default=50, help="rows to print")
     eval_parser = sub.add_parser("eval", help="golden-set evaluation (Phase 6)")
     eval_sub = eval_parser.add_subparsers(dest="eval_command", required=True)
     e_draft = eval_sub.add_parser("draft-questions", help="draft candidate golden questions for review")
