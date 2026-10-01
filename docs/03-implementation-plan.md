@@ -366,21 +366,28 @@
   `--baseline`, and refused for an account that remembers nothing), and the report now has a **vs baseline**
   column with Δ per metric. The test account's notes are seeded with `mmrag memory add`, because the golden set
   asks about documents and so may legitimately produce no memories of its own. The regression gate then *is* acceptance criterion 5.
-  The numbers need two paid runs (about US$1 each) and the owner's budget approval; the procedure and an empty
-  results table are in `docs/06-evaluation-results.md` §9.
+  **Measured on 2026-10-01** (US$1 authorised, ≈US$1.01 spent): faithfulness 0.996 → 0.982 and citation accuracy
+  0.675 → 0.676, both flat and inside the 0.03 tolerance — **criterion 5 met**. The gate still failed: the cost cap
+  stopped the run one question short, `chart_numeric` remains below its target (pre-existing, §4–5), and
+  `tool_call_accuracy` fell 0.068 — confounded, because the only available baseline predates the adopted v3 prompts
+  and 4 rounds, so this run is also the v3 confirmation run. Numbers, the confound and what isolating memory would
+  cost are in `docs/06-evaluation-results.md` §9–10.
 - Tests: 32 unit (namespaces, the update rule, extraction limits, the P13 path through the graph), 22 integration
   (Postgres store, isolation, retention, account deletion, the CLI controls, the UI memory page, the evaluation
   guards and the baseline comparison) and 3 `live` ones for what no mock can show. Full suite: **428 unit and
   integration tests, all passing, with and without an OpenAI key** (one seeding test skips without a key).
 
-**Acceptance criteria**
-- A preference stated in one conversation is applied in a later one.
-- A follow-up that refers to an earlier conversation is understood.
-- One user can never see another user's memories.
-- Deleted memories are no longer recalled; memory switched off means none are stored or recalled.
-- Faithfulness and citation accuracy do not drop with memory on (Phase 6 baseline).
+**Acceptance criteria** (evidence as of 2026-10-01)
+- A preference stated in one conversation is applied in a later one. — ✅ `live` test, real models.
+- A follow-up that refers to an earlier conversation is understood. — ✅ recall and episodes carry it; `live` test.
+- One user can never see another user's memories. — ✅ unit and integration tests on the real store.
+- Deleted memories are no longer recalled; memory switched off means none are stored or recalled. — ✅ tests, CLI and UI.
+- Faithfulness and citation accuracy do not drop with memory on (Phase 6 baseline). — ✅ measured flat (§9), though
+  not yet isolated from the v3 prompt change; one further US$0.9 run would isolate it.
 
-**Gate:** owner demo and approval.
+**Gate:** owner demo and approval. **Open.** The code is complete and all five criteria have evidence; what
+remains is the owner's own demo (`docs/07-operations.md` §9) and sign-off, and the decision whether to spend the
+extra run that separates memory from the v3 prompt change.
 
 ---
 
