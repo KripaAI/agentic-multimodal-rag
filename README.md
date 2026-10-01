@@ -117,6 +117,9 @@ Development is test-driven where it fits (constitution W5, LLD §10). Install th
 | `.venv\Scripts\python -m pytest -m regression` | Re-parses the approved PDFs and compares with `tests/regression/snapshots/` (skipped if the PDFs are absent). After approving a detection change on the review sheet, refresh with `python -m tests.regression.snapshot` |
 | `.venv\Scripts\python -m pytest -m live` | Real OpenAI calls (costs a fraction of a cent); run on request |
 | `.venv\Scripts\python -m pytest --cov=mmrag` | With a coverage report |
+| `docker compose run --rm --entrypoint python ingest -m pytest -q` | The same suite in Linux, for when Windows Smart App Control blocks a library (`tiktoken`) locally |
+
+GitHub runs the suite on every push and pull request (`.github/workflows/tests.yml`).
 
 ## Layout
 
