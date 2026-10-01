@@ -58,3 +58,18 @@ def test_profile_writes_report(cli_env):
     report = json.loads((data / "elements" / "corpus_profile.json").read_text(encoding="utf-8"))
     assert report[0]["source_file"] == "sample.pdf"
     assert len(report[0]["pages"]) == 1
+
+
+def test_an_unreachable_database_gives_a_clear_message_not_a_traceback(cli_env):
+    env, _ = cli_env
+    env = {**env, "DATABASE_URL": "postgresql://nobody:x@127.0.0.1:1/none?connect_timeout=2"}
+    r = _run(env, "doc", "list")
+    assert r.returncode == 2
+    assert "Cannot reach the database" in r.stderr and "docker compose up -d" in r.stderr
+    assert "Traceback" not in r.stderr and "nobody:x" not in r.stderr  # no credentials echoed
+
+
+def test_a_missing_api_key_gives_a_clear_message(cli_env):
+    env, _ = cli_env
+    r = _run(env, "ask", "What is RLHF?")
+    assert r.returncode == 2 and "OPENAI_API_KEY" in r.stderr and "Traceback" not in r.stderr

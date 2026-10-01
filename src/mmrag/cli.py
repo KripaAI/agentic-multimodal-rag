@@ -197,6 +197,44 @@ def cmd_ingest_parse(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- doc (Phase 8)
+
+def cmd_doc(settings: Settings, args: argparse.Namespace) -> int:
+    """Manage the library one PDF at a time; the other PDFs are never re-processed."""
+    from mmrag.index import library
+
+    c = args.doc_command
+    if c == "list":
+        docs = library.list_documents(settings)
+        for d in docs:
+            print(f"{d.source_file:58} v{d.version}  {d.text:>4} text {d.figure:>4} figure {d.table:>4} table  "
+                  f"indexed {d.ingested_at:%Y-%m-%d}")
+        print(f"{len(docs)} documents")
+        return 0
+    if c == "remove":
+        if not args.yes:
+            print(f"This deletes {args.name} and all its search data. Re-run with --yes to confirm.")
+            return 1
+        library.remove_document(settings, args.name)
+        print(f"Removed {args.name} (its PDF is kept in {settings.paths.pdf_dir}/removed/)")
+        return 0
+    try:
+        dest = library.add_pdf(settings, Path(args.path)) if c == "add" \
+            else library.replace_pdf(settings, args.name, Path(args.path))
+    except (FileExistsError, FileNotFoundError) as e:
+        print(e)
+        return 1
+    print(f"{'Added' if c == 'add' else 'Replaced'} {dest.name}. Parsing it now...\n")
+    rc = cmd_ingest_parse(settings, argparse.Namespace(pdf=dest.name))
+    if c == "replace":
+        print("\nSearch still answers from the previous version until the index step below swaps it in.")
+    print(f"\nNext steps for {dest.name}:\n"
+          f"  1. Check the review sheet printed above.\n"
+          f"  2. Figure descriptions on the GPU: mmrag caption bundle|push|pull|import \"{dest.name}\"\n"
+          f"  3. Index it: mmrag ingest index \"{dest.name}\"")
+    return rc
+
+
 # ---------------------------------------------------------------- main
 
 # ---------------------------------------------------------------- index and search (Phase 3)
@@ -569,6 +607,17 @@ def main(argv: list[str] | None = None) -> int:
                               help="stop once priced spend passes this many US$ (default 3)")
     report_parser = sub.add_parser("search-report", help="run the fixed retrieval test queries (Phase 3 gate)")
     report_parser.add_argument("--queries", default=str(PROJECT_ROOT / "eval" / "retrieval_queries.yaml"))
+    doc_parser = sub.add_parser("doc", help="manage the PDF library one document at a time (Phase 8)")
+    doc_sub = doc_parser.add_subparsers(dest="doc_command", required=True)
+    doc_sub.add_parser("list", help="indexed PDFs with their counts")
+    d_add = doc_sub.add_parser("add", help="copy a new PDF into the library and parse it")
+    d_add.add_argument("path")
+    d_rep = doc_sub.add_parser("replace", help="put a new version of a PDF in place of the old one")
+    d_rep.add_argument("name", help="the PDF's file name in the library")
+    d_rep.add_argument("path", help="the new version")
+    d_rm = doc_sub.add_parser("remove", help="delete a PDF and all its search data")
+    d_rm.add_argument("name")
+    d_rm.add_argument("--yes", action="store_true", help="confirm the deletion")
     user_parser = sub.add_parser("user", help="account administration (Phase 7)")
     user_sub = user_parser.add_subparsers(dest="user_command", required=True)
     u_add = user_sub.add_parser("add", help="create an account with a temporary password (shown once)")
@@ -641,11 +690,40 @@ def main(argv: list[str] | None = None) -> int:
         "caption": cmd_caption,
         "eval": cmd_eval,
         "user": cmd_user,
+        "doc": cmd_doc,
     }
     try:
         return handlers[args.command](settings, args)
+    except Exception as e:  # noqa: BLE001 - known failures get a clear message instead of a traceback
+        message = _friendly_error(e)
+        if message is None:
+            raise
+        print(f"Error: {message}", file=sys.stderr)
+        return 2
     finally:
         shutdown_telemetry()
+
+
+def _friendly_error(e: Exception) -> str | None:
+    """A one-line explanation and fix for failures a user can act on; None for real bugs."""
+    import psycopg
+
+    from mmrag.llm import MissingApiKey
+
+    name, text = type(e).__name__, str(e)
+    if isinstance(e, psycopg.OperationalError):
+        return ("Cannot reach the database. Start it with `docker compose up -d` and check DATABASE_URL in .env.")
+    if isinstance(e, MissingApiKey):
+        return "OPENAI_API_KEY is not set. Add it to .env."
+    if "insufficient_quota" in text or "credit_balance_exhausted" in text:
+        return "Your OpenAI account has no credits left. Add credits at platform.openai.com/settings/organization/billing."
+    if name == "AuthenticationError":
+        return "OpenAI rejected the API key. Check OPENAI_API_KEY in .env."
+    if name in ("APIConnectionError", "APITimeoutError"):
+        return "Cannot reach OpenAI (network problem or timeout). Check the connection and try again."
+    if name == "RateLimitError":
+        return "OpenAI rate limit reached. Wait a minute and try again."
+    return None
 
 
 if __name__ == "__main__":
