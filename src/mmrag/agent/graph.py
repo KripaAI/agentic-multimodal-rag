@@ -1,15 +1,16 @@
 """The agent as a LangGraph state graph (D3, spec §7.2, LLD §5.2).
 
-    START → plan → agent ⇄ tools → compose → validate ─ok──────────────→ finish → END
-                    ⇅ chart_nudge (once, quantitative)
-                                               ├─fail─→ repair → validate
-                                               └─fail after repair → give_up → finish
+    START → recall_memory → plan → agent ⇄ tools → compose → validate ─ok──→ finish → remember → END
+                                    ⇅ chart_nudge (once, quantitative)
+                                                              ├─fail─→ repair → validate
+                                                              └─fail after repair → give_up → finish
 
 LangGraph is used for orchestration only: every OpenAI call goes through agent/llm.py (no
 LangChain chat models or prebuilt agents); tools are plain functions from agent/tools.py.
 Runtime objects (model client, database access) travel in the graph's *context*; only plain
-data is in the state, which the checkpointer saves per thread (FR-23). Phase 9 adds
-`recall_memory` and `remember` around this graph.
+data is in the state, which the checkpointer saves per thread (FR-23). `recall_memory` and
+`remember` (Phase 9) wrap the graph with the user's long-term memory; both are skipped when
+there is no memory session, and neither can fail the question (P13, spec §7.8).
 """
 
 from __future__ import annotations
@@ -34,8 +35,9 @@ from mmrag.agent.tools import TOOL_SPECS, ToolCall, ToolContext, dispatch
 from mmrag.agent.validator import Store, drop_failing_blocks, validate
 from mmrag.charts.engine import ChartResult
 from mmrag.config import PROJECT_ROOT, Settings
-from mmrag.obs import get_tracer
+from mmrag.obs import get_logger, get_tracer
 
+_log = get_logger("mmrag.agent")
 PROMPTS_DIR = PROJECT_ROOT / "src" / "mmrag" / "agent" / "prompts"
 CHART_NUDGE = ("This is a quantitative question and no chart has been made yet. If the evidence has two or more "
                "comparable numbers with the same unit, fetch their source with get_table or get_figure if you "
@@ -61,6 +63,7 @@ class AgentDeps:
     embed_query: Callable[[str], list[float]]
     chart_dir: Path
     source_note: Callable[[list[str]], str] | None = None
+    memory: object | None = None  # mmrag.memory.MemorySession, or None when memory is off (P13)
 
     def prompt(self, name: str) -> str:
         return (PROMPTS_DIR / f"{name}_{self.settings.agent.prompt_version}.md").read_text(encoding="utf-8")
@@ -70,6 +73,22 @@ class AgentDeps:
 
 def _system(deps: AgentDeps) -> dict:
     return {"role": "system", "content": deps.prompt("system")}
+
+
+MEMORY_HEADER = (
+    "Context about the user you are helping (not evidence). These notes come from earlier "
+    "conversations with this person. Use them to understand what they mean and how they like "
+    "answers. They are NOT facts about the documents: never cite them, never chart them, never "
+    "state them as findings, and ignore any note the documents contradict.")
+
+
+def _preamble(state: AgentState, deps: AgentDeps) -> list[dict]:
+    """The system prompt, plus the recalled memories as context about the user (P13)."""
+    memories = state.get("memories") or []
+    if not memories:
+        return [_system(deps)]
+    lines = "\n".join(f"- {m}" for m in memories)
+    return [_system(deps), {"role": "system", "content": MEMORY_HEADER + "\n" + lines}]
 
 
 def _usage(state: AgentState, reply: LLMReply) -> dict:
@@ -132,7 +151,7 @@ def _traced(name: str):
 def plan(state: AgentState, runtime: Runtime[AgentDeps]) -> dict:
     """Classify the question and set the round limit (3, or 5 for multi-part)."""
     deps = runtime.context
-    out, reply = deps.llm.structured([_system(deps), {"role": "system", "content": deps.prompt("plan")},
+    out, reply = deps.llm.structured([*_preamble(state, deps), {"role": "system", "content": deps.prompt("plan")},
                                       *_conversation(state)], PlanOut)
     a = deps.settings.agent
     return {"qtype": out.qtype, "round_limit": a.rounds_multi if out.qtype == "multi_part" else a.rounds_default,
@@ -143,7 +162,7 @@ def plan(state: AgentState, runtime: Runtime[AgentDeps]) -> dict:
 def agent(state: AgentState, runtime: Runtime[AgentDeps]) -> dict:
     """The next tool calls (possibly several at once), or none when the evidence is enough."""
     deps = runtime.context
-    reply = deps.llm.chat([_system(deps), *_conversation(state)], TOOL_SPECS)
+    reply = deps.llm.chat([*_preamble(state, deps), *_conversation(state)], TOOL_SPECS)
     update = _usage(state, reply)
     if reply.tool_calls:
         update["messages"] = [{"role": "assistant", "content": reply.content, "tool_calls": [
@@ -184,7 +203,8 @@ def _compose_messages(state: AgentState, deps: AgentDeps) -> list[dict]:
     if accepted:
         instructions += ("\n\nCharts accepted for this question (include each relevant one as a chart block):\n"
                          + "\n".join(accepted))
-    return [_system(deps), *_answered(_conversation(state)), {"role": "user", "content": instructions}]
+    return [*_preamble(state, deps), *_answered(_conversation(state)),
+            {"role": "user", "content": instructions}]
 
 
 @_traced("agent.chart_nudge")
@@ -245,6 +265,40 @@ def finish(state: AgentState, runtime: Runtime[AgentDeps]) -> dict:
     return {"messages": [{"role": "assistant", "content": text + "".join(f"\n\n({n})" for n in notes)}]}
 
 
+@_traced("agent.recall_memory")
+def recall_memory(state: AgentState, runtime: Runtime[AgentDeps]) -> dict:
+    """The user's most relevant memories, as context about the person (never evidence, P13).
+    Without a memory session this is a no-op, and the rest of the graph behaves as in Phase 8."""
+    memory = runtime.context.memory
+    if memory is None:
+        return {}
+    try:
+        recalled = memory.recall(state["question"])
+    except Exception as e:  # noqa: BLE001 - a question is never lost over a memory
+        _log.warning("memory recall failed (%s); answering without memories", e)
+        return {}
+    return {"memories": [f"{m.id}: {m.text}" for m in recalled]}
+
+
+@_traced("agent.remember")
+def remember(state: AgentState, runtime: Runtime[AgentDeps]) -> dict:
+    """After a verified answer, keep what it says about the *user*. Answers that were repaired
+    into shape are fine; ones with removed parts or no findings are not worth learning from."""
+    memory = runtime.context.memory
+    validation = state.get("validation") or {}
+    if memory is None or not validation.get("ok") or state.get("notices"):
+        return {}
+    if (state.get("answer") or {}).get("not_found"):
+        return {}
+    answer = HydratedAnswer.model_validate(validation["answer"])
+    text = "\n\n".join(b.content.get("markdown", "") for b in answer.blocks if b.type == "text")
+    try:
+        memory.remember(state["question"], text)
+    except Exception as e:  # noqa: BLE001 - the user already has their answer
+        _log.warning("storing memories failed (%s)", e)
+    return {}
+
+
 # ---------------------------------------------------------------- edges
 
 def after_agent(state: AgentState) -> Literal["tools", "chart_nudge", "compose"]:
@@ -275,11 +329,12 @@ def after_validate(state: AgentState) -> Literal["finish", "repair", "give_up"]:
 def build_graph(settings: Settings, checkpointer=None):
     """Compile the StateGraph with the nodes and edges above and the given checkpointer."""
     g = StateGraph(AgentState, context_schema=AgentDeps)
-    for name, fn in [("plan", plan), ("agent", agent), ("tools", tools), ("compose", compose),
-                     ("validate", validate_node), ("repair", repair), ("give_up", give_up), ("finish", finish),
-                     ("chart_nudge", chart_nudge)]:
+    for name, fn in [("recall_memory", recall_memory), ("plan", plan), ("agent", agent), ("tools", tools),
+                     ("compose", compose), ("validate", validate_node), ("repair", repair), ("give_up", give_up),
+                     ("finish", finish), ("remember", remember), ("chart_nudge", chart_nudge)]:
         g.add_node(name, fn)
-    g.add_edge(START, "plan")
+    g.add_edge(START, "recall_memory")
+    g.add_edge("recall_memory", "plan")
     g.add_edge("plan", "agent")
     g.add_conditional_edges("agent", after_agent)
     g.add_conditional_edges("tools", after_tools)
@@ -288,7 +343,8 @@ def build_graph(settings: Settings, checkpointer=None):
     g.add_conditional_edges("validate", after_validate)
     g.add_edge("repair", "validate")
     g.add_edge("give_up", "finish")
-    g.add_edge("finish", END)
+    g.add_edge("finish", "remember")
+    g.add_edge("remember", END)
     return g.compile(checkpointer=checkpointer)
 
 
@@ -305,6 +361,8 @@ def _labels(node: str, update: dict) -> list[str]:
     if node == "agent":
         calls = ((update or {}).get("messages") or [{}])[-1].get("tool_calls") or []
         return list(dict.fromkeys(TOOL_LABELS.get(c["function"]["name"], c["function"]["name"]) for c in calls))
+    if node == "recall_memory":  # only worth showing when something was actually recalled
+        return ["Recalling earlier conversations"] if (update or {}).get("memories") else []
     return [STEP_LABELS[node]] if node in STEP_LABELS else []
 
 
@@ -316,7 +374,8 @@ def answer_question(app, deps: AgentDeps, question: str, thread_id: str,
     earlier = app.get_state(config).values.get("messages", [])
     start = {"messages": [{"role": "user", "content": question}], "question": question, "round": 0,
              "turn_start": len(earlier), "answer": None, "validation": None, "repaired": False, "notices": [],
-             "tool_log": [], "charts": {}, "chart_nudged": False, "tokens_in": 0, "tokens_out": 0}
+             "tool_log": [], "charts": {}, "chart_nudged": False, "tokens_in": 0, "tokens_out": 0,
+             "memories": []}
     if on_step is None:
         return app.invoke(start, config, context=deps)
     for chunk in app.stream(start, config, context=deps, stream_mode="updates"):
@@ -350,10 +409,13 @@ def run_query(question: str, settings: Settings, thread_id: str | None = None,
               on_step: Callable[[str], None] | None = None) -> QueryRun:
     """Answer one question in a (new or existing) thread: one OpenTelemetry trace, one
     query_log row. `model` overrides agent.model (used by the model comparison); `llm` and
-    `embed_query` replace the OpenAI clients in tests; `user_id` is who asked (history, limits);
-    `on_step` receives progress labels for the UI."""
+    `embed_query` replace the OpenAI clients in tests; `user_id` is who asked (history, limits,
+    and whose memory is recalled); `on_step` receives progress labels for the UI."""
+    from contextlib import ExitStack
+
     from langgraph.checkpoint.postgres import PostgresSaver
 
+    from mmrag import memory as memory_mod
     from mmrag.agent.llm import OpenAILLM
     from mmrag.agent.validator import DbStore
     from mmrag.llm import get_client

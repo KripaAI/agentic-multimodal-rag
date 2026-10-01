@@ -102,9 +102,27 @@ Accounts are managed from the command line only:
 ```powershell
 mmrag user add | reset-password | disable | enable | unlock <email>
 mmrag user list
+mmrag user delete <email> --yes               # account, sessions and memories
 ```
 
 Daily limits per user (questions and US$) are set in `config.yaml`, under `auth`. For production, serve the app over HTTPS behind a reverse proxy.
+
+## What the assistant remembers (Phase 9)
+
+Each user gets a few durable notes — what they work on, how they like answers — and a short summary of each finished conversation, so a preference stated once carries over and "the chart you showed me last week" means something. Memory **personalises; it never informs**: no answer may cite a memory, and the validator refuses any that tries. Every fact still comes from the documents, with a citation.
+
+In the app, **What I remember** in the sidebar lists everything kept about you, deletes any of it, and switches memory off. From the command line:
+
+```powershell
+mmrag memory list <email>                     # everything remembered, with its keys
+mmrag memory add output_format "Prefers charts to tables." <email>
+mmrag memory delete semantic output_format <email>
+mmrag memory forget-all <email> --yes
+mmrag memory off | on <email>                 # off stops storing and recalling
+mmrag memory summarize <email>                # summarise finished conversations (run nightly)
+```
+
+Settings are under `memory` in `config.yaml`; `memory.enabled: false` switches it off for everyone. Operations are in [docs/07-operations.md](docs/07-operations.md) §9.
 
 ## Tests
 
@@ -134,5 +152,6 @@ GitHub runs the suite on every push and pull request (`.github/workflows/tests.y
 | `gpu_job/` | Kaggle/Colab captioning notebook (Phase 2) |
 | `eval/` | Golden set and evaluation (Phase 6) |
 | `app/` | Streamlit UI (Phase 7) |
+| `src/mmrag/memory/` | Long-term memory: recall, extraction, episodes (Phase 9) |
 
 Database files live in the Docker volume `pgdata`. Back up with `pg_dump`, not by copying files.

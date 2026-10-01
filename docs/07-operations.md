@@ -58,6 +58,9 @@ Any `mmrag` command works after `docker compose run --rm ingest`. The chat app, 
 | Clear a lockout after 5 failed sign-ins | `mmrag user unlock …` |
 | List accounts | `mmrag user list` |
 | Review sign-in events | `mmrag user events --days 7` |
+| Delete an account and everything it remembers | `mmrag user delete someone@example.com --yes` |
+
+Deleting an account removes its sessions and its memories. Its questions stay in `query_log` with no user attached, so the cost history and the operational metrics survive without pointing at a person.
 
 **Admin password recovery.** There is no e-mail reset; recovery is by design an operator action on the server. Anyone with shell access to the server runs `mmrag user reset-password <admin email>`. That revokes every session of that account and prints a one-time temporary password, which must be changed at the next sign-in. Server shell access is therefore the root of trust, so protect it.
 
@@ -72,7 +75,9 @@ Any `mmrag` command works after `docker compose run --rm ingest`. The chat app, 
   - query history older than `retention.query_log_days` (90);
   - sign-in events older than `retention.auth_events_days` (365);
   - sessions that ended more than 30 days ago;
-  - the saved conversation state of threads whose history is gone.
+  - the saved conversation state of threads whose history is gone;
+  - memories older than `memory.retention_days` (365).
+- **Episode summaries:** `mmrag memory summarize <email>` writes one summary per finished conversation of that account (see §9). Run it nightly, per account or in a loop over `mmrag user list`. It is safe to re-run: a conversation already summarised is skipped unless it has new turns.
 - **Alerts:** `mmrag obs alerts` exits with code 1 when any of these hold:
   - today's total cost is over `alerts.daily_cost_usd`;
   - more than `alerts.dropped_rate` of the last hour's answers had unverified parts removed (only judged once there are at least `alerts.min_questions`);
@@ -128,3 +133,40 @@ Any managed PostgreSQL 16 with the **pgvector** extension works (for example Azu
 - **Tests that need the source PDFs** (regression) are skipped, because the PDFs are not in git.
 - **Paid tests** (`-m live`) are run manually.
 - **Results** are in the repository's **Actions** tab and on each pull request.
+
+## 9. Long-term memory
+
+The assistant keeps a few notes about each user — what they work on, how they like answers — and a short summary of each finished conversation. They **personalise; they never inform** (constitution P13): no answer may cite one, and the validator refuses any that tries. Every fact in an answer still comes from the documents.
+
+| Task | Where |
+|---|---|
+| See what is remembered about someone | `mmrag memory list someone@example.com` |
+| Delete one memory | `mmrag memory delete semantic output_format someone@example.com` |
+| Delete all of them | `mmrag memory forget-all someone@example.com --yes` |
+| Switch one account's memory off / on | `mmrag memory off …` / `mmrag memory on …` |
+| Switch it off for everyone | `memory.enabled: false` in `config.yaml` |
+| The user's own controls | **What I remember** in the app sidebar: the same list, deletion, and an on/off switch |
+
+**Switching off** stops storing and recalling; it does not delete what is already kept — `forget-all` does that.
+
+**Where memories live.** In LangGraph's `store` table on the project database, one namespace per user (`memories/<user_id>/semantic` and `…/episodic`), searched by meaning with the same embedding model as the documents. A backup of the database (§2) therefore includes them.
+
+**Privacy (NFR-13).** Memories are never shared between users; traces record only how many were recalled, and their text reaches a trace only through the prompts, which are captured only when `observability.capture_content` is on — it must be `false` in production. Retention is `memory.retention_days`.
+
+**Checking it works (the Phase 9 demo).**
+1. Ask a question and say how you want answers, for example "from now on give me charts rather than tables".
+2. Start a **new conversation** and ask a comparable question: the answer should come back as a chart.
+3. Open **What I remember**: the preference is listed. Delete it, ask again, and the preference is gone.
+4. `mmrag memory off <you>`, ask again: nothing is recalled and nothing new is stored.
+
+**Checking it costs nothing in quality.** Evaluation runs pass no user, so the Phase 6 baseline is measured with memory off. To measure memory on, use a throwaway account so no real user's memory is polluted:
+
+```powershell
+mmrag user add eval-memory@example.com
+mmrag memory add output_format "Prefers charts to tables." eval-memory@example.com
+mmrag memory add topic_focus "Is studying attention and KV caching." eval-memory@example.com
+mmrag eval run --as-user eval-memory@example.com --max-cost 1.50
+mmrag user delete eval-memory@example.com --yes
+```
+
+Seeding the notes by hand keeps the comparison deterministic, and it is the only reliable way: the golden set asks about documents, so a warm-up run (`--as-user … --warmup`, which stores without recalling) may legitimately extract nothing to measure. Seed the kinds of notes real use produces — a format preference and a topic focus. `--as-user` is refused together with `--baseline` — the baseline stays memory-off. The report's **vs baseline** column gives Δ per metric, and the regression gate fails the run if a gated metric falls more than `eval.regression_tolerance` below the baseline, so a passing run is the acceptance criterion met. Record the numbers in `docs/06-evaluation-results.md` §9.

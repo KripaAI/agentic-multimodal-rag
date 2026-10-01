@@ -97,3 +97,65 @@ The full list, with reasons, is in `data/eval/spot_check.json` (local file).
 | After the top-up: combined "improved" run (40 questions) | 1.02 |
 | After the top-up: chart-question run with prompts v3 (8 questions) | 0.29 |
 | **After the top-up, total** | **≈ 2.23 of the US$3 cap** |
+
+---
+
+## 9. Memory on vs the baseline (Phase 9, acceptance criterion 5)
+
+**The claim to test:** switching long-term memory on does not lower faithfulness or citation accuracy. Memory personalises; it is never evidence (P13), so the scores should be flat.
+
+**Why the baseline is unaffected.** `mmrag eval run` passes no user, so memory is never recalled or stored in a normal run — the Phase 6 baseline above stands as the memory-off measurement.
+
+**Procedure** (about US$1 per 40-question run at the prices in §8, so budget for two):
+
+```powershell
+mmrag user add eval-memory@example.com           # a throwaway account, so no real user's memory is polluted
+mmrag memory add output_format "Prefers charts to tables." eval-memory@example.com
+mmrag memory add topic_focus "Is studying attention and KV caching." eval-memory@example.com
+mmrag eval run --as-user eval-memory@example.com --max-cost 1.50
+mmrag user delete eval-memory@example.com --yes  # removes the account and its memories
+```
+
+The notes are seeded by hand because the golden set asks about documents: a run that only stores (`--warmup`) may legitimately extract nothing, leaving nothing to measure. `--as-user` is refused together with `--baseline`: the baseline must stay memory-off. Note that the run also *adds* memories as it goes, so a repeat run is not identical — delete and re-seed the account to repeat it exactly. The report's **vs baseline** column shows Δ per metric, and the regression gate fails the run if a gated metric is more than `eval.regression_tolerance` (0.03) below the baseline — so a pass *is* the criterion met.
+
+**Result (2026-10-01, run `c9fd5874`, commit `c677716`, label "memory on"):** 39 of 40 questions; the run stopped at a US$0.85 cost cap one question short of the end (`u3`, an unanswerable question — `refusal` is therefore 2/2, not 3/3).
+
+| Metric | Baseline `a147d95f` | Memory on `c9fd5874` | Δ | Within 0.03 |
+|---|---|---|---|---|
+| **Faithfulness** | 0.996 | 0.982 | −0.014 | ✅ |
+| **Citation accuracy** | 0.675 | 0.676 | +0.002 | ✅ |
+| Multimodal faithfulness | 1.000 | 1.000 | 0.000 | ✅ |
+| Context precision | 0.876 | 0.871 | −0.005 | ✅ |
+| Context recall | 0.993 | 0.973 | −0.020 | ✅ |
+| Factual correctness | 0.741 | 0.739 | −0.001 | ✅ |
+| Figure hit rate | 0.857 | 0.857 | 0.000 | ✅ |
+| Response relevancy | 0.707 | 0.683 | −0.024 | ✅ |
+| Correct refusal | 1.000 | 1.000 (2/2) | 0.000 | ✅ |
+| Chart numeric | 0.500 | 0.625 | +0.125 | ✅ (still below the 1.0 target, §5) |
+| **Tool call accuracy** | 0.932 | 0.865 | **−0.068** | ❌ beyond tolerance |
+| Median cost per question | US$0.0139 | US$0.0130 | −0.0009 | — |
+| Median latency | 9.3 s | 8.2 s | −1.1 s | — |
+
+**The criterion is met: faithfulness and citation accuracy do not drop.** Both are flat, which is what the design predicts — memories reach the model as labelled user context and the validator refuses any citation to one, so there is no path by which a memory can become a claim. The `live` test `test_no_answer_ever_cites_a_memory` checks that path against the real agent.
+
+**The gate still failed, for three reasons, and only one of them is about quality:**
+1. the cost cap stopped the run one question early (budget, not a defect);
+2. `chart_numeric` 0.625 is below its 1.0 target — a **pre-existing** gap (§4, §5), and better than the baseline's 0.500;
+3. `tool_call_accuracy` fell 0.068, beyond the 0.03 tolerance. See the confound below.
+
+**Important confound — this is not a clean memory-on/memory-off comparison.** The baseline was run on 2026-09-30 with agent prompts **v1 and 3 rounds**; this run used the adopted configuration, **v3 and 4 rounds** (§7, where a full 40-question confirmation run was recorded as "pending budget"). So this single run is *both* the pending v3 confirmation and the memory-on measurement, and its deltas mix the two changes. The two metrics that moved most are the ones v3 was designed to move: `chart_numeric` up (v3 is the chart-rules prompt) and `tool_call_accuracy` down (more chart and table fetches that the golden set's `expected_tool_calls` do not list — the seven questions below 1.0 are mixed and numeric ones calling extra searches, not memory-driven behaviour).
+
+**To isolate memory** costs one more run: the same 40 questions at the current config with no `--as-user`, recorded as the new baseline, then this run compared against it. About US$0.9.
+
+**The extractor stored nothing new across the whole run.** After 39 answered questions the account still held exactly the two seeded notes. That is the designed behaviour — the golden set asks about documents, and the prompt says an exchange that reveals nothing lasting about the user should produce no statement — and it confirms two things: the extractor is not over-eager (the main P13 risk), and the plan's warm-up idea could not have produced the notes this comparison needed, which is why `mmrag memory add` exists.
+
+**Known gap in cost accounting.** `recall_memory` and `remember` do not appear in `query_log.cost_usd`: the extractor is a separate model client whose tokens never enter the agent's state. So the median cost above understates memory-on cost by roughly US$0.001 per answer (about US$0.04 across this run), and the `auth.daily_cost_limit_usd` per-user limit does not see it either. Not a correctness problem; worth fixing before memory is relied on for cost control.
+
+## 10. Spend on the Phase 9 measurement
+
+| Item | US$ |
+|---|---|
+| `pytest -m live`, two runs (6 agent questions) | 0.11 |
+| Memory-on golden-set run, 39/40 questions (agent + judge) | 0.855 |
+| Memory extraction calls, not counted above (estimated) | ≈ 0.04 |
+| **Total** | **≈ 1.01 of the US$1 authorised** |

@@ -197,12 +197,57 @@ def sidebar(settings: Settings, user: service.User) -> None:
         if user.is_admin and st.button("📊 Admin metrics", width="stretch"):
             st.session_state["view"] = "admin"
             st.rerun()
+        if st.button("What I remember", width="stretch"):
+            st.session_state["view"] = "memory"
+            st.rerun()
         if st.button("Change password", width="stretch"):
             st.session_state["view"] = "password"
             st.rerun()
         if st.button("Sign out", width="stretch"):
             service.logout(settings, st.session_state.get("token"))
             st.session_state.clear()
+            st.rerun()
+
+
+def memory_view(settings: Settings, user: service.User) -> None:
+    """What the assistant remembers about this user, and the controls over it (FR-25).
+
+    These notes are never evidence: they shape how a question is understood and how an answer
+    is presented, and the validator refuses any answer that tries to cite one (P13).
+    """
+    from mmrag import memory
+
+    st.title("What the assistant remembers")
+    if st.button("Back to chat"):
+        st.session_state.pop("view", None)
+        st.rerun()
+    if not settings.memory.enabled:
+        st.info("Memory is switched off for the whole application.")
+        return
+    enabled = memory.is_enabled(settings, user.user_id)
+    st.caption("Notes about you from earlier conversations: what you work on and how you like answers. "
+               "They are never used as a source: every fact in an answer still comes from the documents.")
+    if st.toggle("Remember me between conversations", value=enabled, key="memory-toggle") != enabled:
+        memory.set_enabled(settings, user.user_id, not enabled)
+        st.rerun()
+    if not enabled:
+        st.warning("Memory is off: nothing new is stored and nothing is recalled. What was stored before is kept "
+                   "until you delete it.")
+    with memory.open_store(settings) as store:
+        items = memory.list_memories(store, user.user_id)
+        if not items:
+            st.info("Nothing is remembered about you yet.")
+            return
+        for m in items:
+            row = st.columns([8, 1])
+            label = "About you" if m.kind == "semantic" else "A past conversation"
+            row[0].markdown(f"**{label}** · {(m.updated_at or '')[:10]}  \n{m.text}")
+            if row[1].button("Delete", key=f"mem-{m.kind}-{m.key}"):
+                memory.delete(store, user.user_id, m.kind, m.key)
+                st.rerun()
+        st.divider()
+        if st.button(f"Delete all {len(items)} memories", type="primary"):
+            memory.forget_all(store, user.user_id)
             st.rerun()
 
 
@@ -279,6 +324,8 @@ def main() -> None:
     view = st.session_state.get("view")
     if view == "password":
         login.change_password_screen(settings, forced=False)
+    elif view == "memory":
+        memory_view(settings, user)
     elif view == "admin" and user.is_admin:
         admin_view(settings)
     else:

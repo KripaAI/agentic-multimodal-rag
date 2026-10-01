@@ -101,6 +101,17 @@ class Agent(_Section):
     max_parallel_tools: int = Field(ge=1)
 
 
+class Memory(_Section):
+    """Long-term memory (Phase 9, spec §7.8). Memory personalises; it is never evidence (P13)."""
+
+    enabled: bool = True              # master switch; each user can also switch their own off
+    model: str | None = None          # low-cost extractor; None falls back to agent.summary_model
+    recall_k: int = Field(default=5, ge=1)        # memories passed to the planner
+    retention_days: int = Field(default=365, ge=1)
+    max_statement_chars: int = Field(default=200, gt=0)
+    idle_minutes: int = Field(default=60, ge=1)   # a thread is "ended" after this long without a question
+
+
 class ModelPrice(_Section):
     input_per_mtok: float = Field(ge=0)  # US$ per 1M input tokens
     output_per_mtok: float = Field(ge=0)  # US$ per 1M output tokens (includes reasoning tokens)
@@ -167,6 +178,7 @@ class Settings(_Section):
     embed: Embed
     search: Search
     agent: Agent
+    memory: Memory = Memory()
     ui: UI
     auth: Auth
     observability: Observability

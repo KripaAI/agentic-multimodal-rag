@@ -232,6 +232,27 @@ def unlock(settings: Settings, email: str) -> None:
         conn.commit()
 
 
+def delete_user(settings: Settings, email: str) -> dict[str, int]:
+    """Delete an account and everything private to it (FR-25, Phase 9).
+
+    Memories go first and explicitly: they live in LangGraph's store table, which has no
+    foreign key to `users`, so nothing else would ever remove them. Sessions cascade; the
+    user's questions stay in `query_log` with `user_id` set to NULL, so the cost history and
+    the operational metrics survive without pointing at a person.
+    """
+    from mmrag.memory import delete_user_memories
+
+    with db.connect(settings) as conn:
+        uid = _user_id(conn, email)
+    memories = delete_user_memories(settings, uid)
+    with db.connect(settings) as conn:
+        conn.execute("DELETE FROM users WHERE user_id = %s", (uid,))
+        _event(conn, "user_deleted", None, _norm(email))
+        conn.commit()
+    _log.info("account deleted; %d memories removed", memories)
+    return {"memories": memories}
+
+
 def recent_events(settings: Settings, days: int = 7) -> list[tuple]:
     """(time, event, email attempted, ip) newest first, for the sign-in audit review."""
     with db.connect(settings) as conn:
