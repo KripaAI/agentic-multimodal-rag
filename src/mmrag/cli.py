@@ -239,6 +239,28 @@ def cmd_ingest_parse(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- obs (Phase 8)
+
+def cmd_obs(settings: Settings, args: argparse.Namespace) -> int:
+    from mmrag.obs.ops import check_alerts, cleanup
+
+    if args.obs_command == "cleanup":
+        r = settings.retention
+        if not args.yes:
+            print(f"This deletes query history older than {r.query_log_days} days, sign-in events older than "
+                  f"{r.auth_events_days} days and old sessions. Re-run with --yes to confirm.")
+            return 1
+        for table, n in cleanup(settings).items():
+            print(f"  {table:18} {n} deleted")
+        return 0
+    alerts = check_alerts(settings)
+    for a in alerts:
+        print(f"ALERT: {a}")
+    if not alerts:
+        print("No alerts.")
+    return 1 if alerts else 0  # non-zero lets a scheduled task notify
+
+
 # ---------------------------------------------------------------- doc (Phase 8)
 
 def cmd_doc(settings: Settings, args: argparse.Namespace) -> int:
@@ -656,6 +678,11 @@ def main(argv: list[str] | None = None) -> int:
                               help="stop once priced spend passes this many US$ (default 3)")
     report_parser = sub.add_parser("search-report", help="run the fixed retrieval test queries (Phase 3 gate)")
     report_parser.add_argument("--queries", default=str(PROJECT_ROOT / "eval" / "retrieval_queries.yaml"))
+    obs_parser = sub.add_parser("obs", help="operations: retention cleanup and alerts (Phase 8)")
+    obs_sub = obs_parser.add_subparsers(dest="obs_command", required=True)
+    o_clean = obs_sub.add_parser("cleanup", help="delete history, sign-in events and sessions past retention")
+    o_clean.add_argument("--yes", action="store_true", help="confirm the deletion")
+    obs_sub.add_parser("alerts", help="check cost, removed-parts rate and failed sign-ins; exit 1 on an alert")
     doc_parser = sub.add_parser("doc", help="manage the PDF library one document at a time (Phase 8)")
     doc_sub = doc_parser.add_subparsers(dest="doc_command", required=True)
     doc_sub.add_parser("list", help="indexed PDFs with their counts")
@@ -741,6 +768,7 @@ def main(argv: list[str] | None = None) -> int:
         "eval": cmd_eval,
         "user": cmd_user,
         "doc": cmd_doc,
+        "obs": cmd_obs,
     }
     try:
         return handlers[args.command](settings, args)
