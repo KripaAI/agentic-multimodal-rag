@@ -111,6 +111,48 @@ def cmd_db_migrate(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_db_backup(settings: Settings, args: argparse.Namespace) -> int:
+    import datetime
+
+    from mmrag.db.backup import backup
+
+    out = Path(args.out) if args.out else (settings.resolve(settings.paths.data_dir) / "backups"
+                                           / f"mmrag-{datetime.datetime.now():%Y%m%d-%H%M%S}.dump")
+    path = backup(settings, out)
+    print(f"Backup: {path} ({path.stat().st_size / 1e6:.1f} MB)")
+    return 0
+
+
+def cmd_db_restore(settings: Settings, args: argparse.Namespace) -> int:
+    from mmrag.db.backup import restore
+
+    name = restore(settings, Path(args.dump), args.into)
+    print(f"Restored into database {name}. To use it, point DATABASE_URL in .env at {name}.")
+    return 0
+
+
+def cmd_db_verify_restore(settings: Settings, args: argparse.Namespace) -> int:
+    """Restore into a scratch database, run the retrieval test queries on both, then drop it."""
+    import uuid
+
+    from mmrag.db.backup import compare_search, drop_database, restore
+    from mmrag.retrieval.report import load_queries
+
+    scratch = f"mmrag_verify_{uuid.uuid4().hex[:8]}"
+    restore(settings, Path(args.dump), scratch)
+    try:
+        queries = [(q.query, q.collection) for q in load_queries(PROJECT_ROOT / "eval" / "retrieval_queries.yaml")]
+        diffs = compare_search(settings, scratch, queries)
+    finally:
+        drop_database(settings, scratch)
+    if diffs:
+        for q, coll, a, b in diffs:
+            print(f"DIFFERENT: {coll} '{q}': live {a[:3]}… vs restored {b[:3]}…")
+        return 1
+    print(f"Restore verified: {len(queries)} search queries return identical results on the restored copy.")
+    return 0
+
+
 def cmd_models(settings: Settings, args: argparse.Namespace) -> int:
     from mmrag.llm import get_client
 
@@ -581,6 +623,13 @@ def main(argv: list[str] | None = None) -> int:
     db_parser = sub.add_parser("db", help="database commands")
     db_sub = db_parser.add_subparsers(dest="db_command", required=True)
     db_sub.add_parser("migrate", help="apply pending SQL migrations")
+    db_backup = db_sub.add_parser("backup", help="dump the whole database (default: data/backups/)")
+    db_backup.add_argument("--out")
+    db_restore = db_sub.add_parser("restore", help="restore a dump into a NEW database (never overwrites)")
+    db_restore.add_argument("dump")
+    db_restore.add_argument("--into", required=True, help="name of the new database")
+    db_verify = db_sub.add_parser("verify-restore", help="restore into a scratch database and compare searches")
+    db_verify.add_argument("dump")
     profile_parser = sub.add_parser("profile", help="report pages, images, tables and textless pages per PDF")
     profile_parser.add_argument("pdfs", nargs="*", help="PDF files (default: all in paths.pdf_dir)")
     ingest_parser = sub.add_parser("ingest", help="ingestion commands")
@@ -679,7 +728,8 @@ def main(argv: list[str] | None = None) -> int:
     handlers = {
         "check": cmd_check,
         "models": cmd_models,
-        "db": {"migrate": cmd_db_migrate}.get(getattr(args, "db_command", None)),
+        "db": {"migrate": cmd_db_migrate, "backup": cmd_db_backup, "restore": cmd_db_restore,
+               "verify-restore": cmd_db_verify_restore}.get(getattr(args, "db_command", None)),
         "profile": cmd_profile,
         "ingest": {"parse": cmd_ingest_parse, "index": cmd_ingest_index,
                    "compare-summaries": cmd_compare_summaries}.get(getattr(args, "ingest_command", None)),

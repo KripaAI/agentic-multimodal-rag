@@ -26,6 +26,7 @@ data/answers/*
 data/study/*
 data/eval/*
 data/security/*
+data/backups/*
 !data/**/.gitkeep
 
 # Editors / OS
