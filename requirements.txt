@@ -26,3 +26,6 @@ kaleido>=1.4,<2
 markdown-it-py>=4,<5
 # Phase 6: local ONNX cross-encoder reranker (no PyTorch)
 fastembed>=0.8,<0.9
+# Phase 7: web UI and password hashing
+streamlit>=1.64,<2
+argon2-cffi>=25,<26

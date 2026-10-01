@@ -180,3 +180,15 @@ def test_compose_is_told_which_charts_were_accepted(parse_settings, tmp_path):
 def tools_dir():
     from mmrag.agent.graph import PROMPTS_DIR
     return PROMPTS_DIR
+
+
+def test_progress_is_reported_step_by_step(parse_settings, tmp_path):
+    llm = FakeLLM(chats=[_call(1)], answers=[_cited("d:text:1")])
+    app = build_graph(parse_settings, InMemorySaver())
+    deps = AgentDeps(settings=parse_settings, llm=llm, store=FakeStore(), embed_query=lambda q: [0.0],
+                     chart_dir=tmp_path, source_note=lambda ids: "")
+    steps = []
+    state = answer_question(app, deps, "How?", "t-progress", on_step=steps.append)
+    assert state["validation"]["ok"]
+    assert steps[0] == "Understanding the question" and "Searching the text" in steps
+    assert "Writing the answer" in steps and steps[-1] == "Checking the citations"
