@@ -417,4 +417,17 @@ extra run that separates memory from the v3 prompt change.
 
 ## Next step
 
-Phases 0–8 are complete and Phase 9 is built. Next: the **Phase 9 gate** — the owner runs the demo in `docs/07-operations.md` (a preference stated in one conversation applied in the next, the memory page, deletion) and the evaluation comparison with memory on, then signs off.
+**All nine phases are built. Phase 9 is the last planned phase; there is no Phase 10.**
+
+Phases 0–8 are complete and signed off. Phase 9 is built, tested (428 unit and integration tests, 5 `live`) and
+measured (§9 of the evaluation results: faithfulness and citation accuracy flat with memory on). What is left:
+
+1. **Merge** `phase-9` into `main` through a pull request, then run `mmrag db migrate` — migration 0006 is what makes
+   the memory commands work.
+2. **The Phase 9 gate:** the owner's own demo (`docs/07-operations.md` §9) and sign-off, the last of the W3 gates.
+3. **Two noted follow-ups**, neither blocking: memory's model calls do not reach `query_log.cost_usd`, so per-user
+   cost limits do not see them; and one US$0.9 run would separate the memory measurement from the v3 prompt change
+   it is currently confounded with (evaluation results §9).
+
+The Phase 6 quality gaps the owner accepted (§5 of the evaluation results — citation accuracy, response relevancy,
+factual correctness and chart numeric targets) remain as accepted, and are unchanged by memory.
