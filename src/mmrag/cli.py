@@ -639,6 +639,15 @@ def cmd_eval(settings: Settings, args: argparse.Namespace) -> int:
 
         tuned = apply_overrides(settings, args.set or [])
         items, _ = load_golden_set(golden)
+        if args.indexed_only:  # a partial library: questions about PDFs not indexed would be misses for any setting
+            from mmrag import db
+
+            with db.connect(settings) as conn:
+                indexed = {r[0] for r in conn.execute("SELECT doc_id FROM documents")}
+            kept = [i for i in items if i.reference_ids and all(r.split(":")[0] in indexed for r in i.reference_ids)]
+            print(f"{len(kept)} of {sum(i.answerable for i in items)} answerable questions have every reference "
+                  f"in the {len(indexed)} indexed PDFs")
+            items = kept
         out = retrieval_scores(items, lambda q, coll: search(tuned, q, coll, 10), DbStore(settings).locations)
         label = ", ".join(args.set or []) or "current config"
         print(f"{label}: " + " · ".join(f"{k} {v}" for k, v in out["overall"].items()))
@@ -919,6 +928,8 @@ def main(argv: list[str] | None = None) -> int:
     e_retr.add_argument("--set", action="append", metavar="SECTION.FIELD=VALUE",
                         help="override a setting for this run, e.g. search.keyword_mode=any (repeatable)")
     e_retr.add_argument("--show-misses", action="store_true")
+    e_retr.add_argument("--indexed-only", action="store_true",
+                        help="only questions whose reference evidence is in PDFs indexed in this database")
     e_report = eval_sub.add_parser("report", help="write the report for a run")
     e_report.add_argument("run_id")
     caption_parser = sub.add_parser("caption", help="VLM figure captioning on Kaggle (Phase 2)")

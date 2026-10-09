@@ -159,3 +159,26 @@ The notes are seeded by hand because the golden set asks about documents: a run 
 | Memory-on golden-set run, 39/40 questions (agent + judge) | 0.855 |
 | Memory extraction calls, not counted above (estimated) | ≈ 0.04 |
 | **Total** | **≈ 1.01 of the US$1 authorised** |
+
+## 11. EmbeddingGemma 2 vs OpenAI embeddings (Phase 10, preliminary)
+
+**Date:** 2026-10-09 · **Branch:** `phase-10-embeddinggemma` · **Databases:** `mmrag` (OpenAI `text-embedding-3-large`, 1536 dims) and `mmrag_gemma` (`google/embeddinggemma-2`, text tower, 768 dims, local CPU), same server, same parsed PDFs, same table summaries.
+
+**Scope, and why it is preliminary.** Run on a new machine where only 4 of the 5 PDFs were available (`Buildig-multimodal-rag.pdf` was not found; the other four match the golden set's `doc_id`s byte for byte) and **without VLM captions** (no Kaggle token on this machine, so figures are indexed from their printed labels only). Both databases got identical inputs, so the comparison between the two models is fair, but the absolute numbers are not comparable with §2. Search-only (`mmrag eval retrieval --indexed-only`): the 27 answerable golden questions whose evidence is all in the 4 indexed PDFs.
+
+| | OpenAI hit@5 | Gemma hit@5 | OpenAI MRR@10 | Gemma MRR@10 | Questions |
+|---|---|---|---|---|---|
+| **Overall** | 0.889 | **0.926** | 0.758 | **0.772** | 27 |
+| Text | 0.600 | **0.667** | 0.553 | **0.620** | 15 |
+| Figures | 1.000 | 1.000 | **0.803** | 0.730 | 11 |
+| Tables | 1.000 | 1.000 | 0.833 | **0.875** | 4 |
+
+hit@10 is 0.963 for both; both miss the same question (c01).
+
+**Reading:** a tie within noise. Overall hit@5 differs by one question out of 27. Gemma ranks text and table evidence a little higher and figures a little lower. Nothing here clears P10's bar for a *quality* reason to switch; Gemma's case is cost (no embedding API calls, CPU only) and independence from OpenAI for embeddings.
+
+**Figure linking needs its own threshold.** `enrich.link_min_score` (0.4) was tuned on OpenAI similarities; Gemma's run about 0.3 higher (median score of a related link 0.875 vs 0.569), so the threshold rejects almost nothing: 90 related links against OpenAI's 78, and *Transformers-in-Practice* went from 10 unlinked figures to 0. Of the 12 Gemma-only links, some are right (the Query/Key/Value figure to the paragraph on the three matrices) and some are not (a table linked to a page header). 55 links agree on the paragraph, 23 differ. Tune `link_min_score` in `config.gemma.yaml` on the link reports before any full evaluation.
+
+**Speed and cost.** Indexing the 4 PDFs: OpenAI a few cents; Gemma US$0 but slower (CPU, ~10+ minutes for ~700 search documents on this laptop). Query embedding is fast enough either way.
+
+**Decision (pending owner):** production stays on OpenAI. Keep `config.gemma.yaml` as a working option. Re-run this comparison with all 5 PDFs and VLM captions, then decide whether a full agent evaluation (~US$1) is worth it. A separate experiment worth more than this one: EmbeddingGemma 2 can embed the figure PNGs themselves, which targets the figure hit rate rather than text.
