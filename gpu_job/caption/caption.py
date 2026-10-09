@@ -248,6 +248,9 @@ class VLLMBackend:
 
     def __init__(self, model_path: str, max_pixels: int):
         _pip("vllm", "qwen-vl-utils")
+        # vLLM brings its own torch build; the image's preinstalled torchaudio is then built for another
+        # CUDA version and fails the model load (Kaggle image, 2026-10). Captioning needs no audio.
+        subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "-q", "torchaudio"], check=False)
         from vllm import LLM, SamplingParams
 
         self.model_id = MODELS[model_path]

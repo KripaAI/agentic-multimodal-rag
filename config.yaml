@@ -31,7 +31,7 @@ caption:
   model_path: awq-7b                # chosen by the owner in the Phase 2 pilot (options: awq-7b | nf4-7b | 3b)
   max_pixels: 1003520               # 1280 * 28 * 28
   prompt_version: v2                # gpu_job/caption/prompts/caption_v2.md
-  kaggle_username: krishmithlesh0786  # owner of the private bundle dataset and GPU kernel
+  kaggle_username: nikkykumaridaksh  # owner of the private bundle dataset and GPU kernel
 
 enrich:
   label_overlap_min: 0.5            # share of the VLM's label words that must be in the PDF (tau)
