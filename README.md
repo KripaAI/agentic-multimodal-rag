@@ -124,6 +124,35 @@ mmrag memory summarize <email>                # summarise finished conversations
 
 Settings are under `memory` in `config.yaml`; `memory.enabled: false` switches it off for everyone. Operations are in [docs/07-operations.md](docs/07-operations.md) §9.
 
+## Trying another embedding model (Phase 10)
+
+Documents and questions must be embedded by the same model, and vectors from two models cannot be
+compared. So an experiment gets **its own database** on the same server, and its own config file
+that holds only what differs from `config.yaml`. The parsed PDFs and figure captions are reused:
+only `ingest index` runs again. The production database is never touched.
+
+`config.gemma.yaml` tries [EmbeddingGemma 2](https://huggingface.co/google/embeddinggemma-2), an
+open model that runs on the CPU (text only, 768 dims), in a database called `mmrag_gemma`:
+
+```powershell
+.venv\Scripts\python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+.venv\Scripts\python -m pip install -r requirements-local-embed.txt
+$env:MMRAG_CONFIG = "config.gemma.yaml"       # this shell only; every mmrag command now uses it
+mmrag db create                               # creates mmrag_gemma
+mmrag db migrate                              # builds vector(768) columns from embed.dims
+mmrag check                                   # loads the model (downloaded once, ~1 GB) and checks dims
+mmrag ingest index file.pdf                   # for each PDF
+Remove-Item Env:MMRAG_CONFIG                  # back to config.yaml
+```
+
+In Docker: `LOCAL_EMBED=1 docker compose --profile tools build ingest`, then
+`docker compose run --rm -e MMRAG_CONFIG=config.gemma.yaml ingest ingest index "file.pdf"`.
+
+A config is refused against a database whose vectors are another size, so the two cannot be mixed
+by mistake. The evaluation judge keeps its own embedding model (`eval.judge_embed_model`), so scores
+from both databases are comparable. Keep only what measurably helps (P10); `DROP DATABASE
+mmrag_gemma` removes the experiment.
+
 ## Tests
 
 Development is test-driven where it fits (constitution W5, LLD §10). Install the test tools with `pip install -r requirements-dev.txt`.

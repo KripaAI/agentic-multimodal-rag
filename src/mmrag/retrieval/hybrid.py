@@ -168,5 +168,5 @@ def _default_embedder(settings: Settings) -> Callable[[str], list[float]]:
         from mmrag.index.embed import Embedder
 
         embedder = Embedder(settings)
-        _embedders[key] = lru_cache(maxsize=512)(lambda q: embedder.embed([q])[0])
+        _embedders[key] = lru_cache(maxsize=512)(lambda q: embedder.embed([q], "query")[0])
     return _embedders[key]

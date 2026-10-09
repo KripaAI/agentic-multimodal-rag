@@ -24,7 +24,7 @@ class FakeEmbedder:
         h = hashlib.sha256(text.encode("utf-8")).digest()
         return [(h[i % 32] - 128) / 128 for i in range(self.dims)]
 
-    def embed(self, texts):
+    def embed(self, texts, kind="document"):
         self.calls += 1
         return [self._vec(t) for t in texts]
 

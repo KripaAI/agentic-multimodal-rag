@@ -86,3 +86,63 @@ def test_a_damaged_cache_line_is_skipped_and_re_embedded(embedder_for, tmp_path)
     client = FakeClient()
     embedder_for(client).embed(["kept", "lost"])  # no crash
     assert client.calls[0][1] == ["lost"]  # only the damaged entry is paid for again
+
+
+# ---------------------------------------------------------------- Phase 10: local provider
+
+class FakeLocalModel:
+    """sentence-transformers' `encode`, recording what it was given."""
+
+    def __init__(self, dims):
+        self.dims, self.calls = dims, []
+
+    def encode(self, texts, batch_size, normalize_embeddings, convert_to_numpy):
+        self.calls.append(list(texts))
+        return [[float(len(t))] * self.dims for t in texts]
+
+
+@pytest.fixture
+def local_settings(parse_settings):
+    return parse_settings.model_copy(update={"embed": parse_settings.embed.model_copy(
+        update={"provider": "local", "model": "google/embeddinggemma-2", "dims": 768})})
+
+
+def test_local_model_gets_the_model_card_prompts(local_settings, tmp_path):
+    model = FakeLocalModel(768)
+    e = Embedder(local_settings, cache_path=tmp_path / "emb.jsonl", local_model=model)
+    e.embed(["q"], "query")
+    e.embed(["d"], "document")
+    e.embed(["s"], "similarity")
+    assert model.calls == [["task: search result | query: q"], ["title: none | text: d"],
+                           ["task: sentence similarity | query: s"]]
+
+
+def test_local_query_and_document_are_cached_apart(local_settings, tmp_path):
+    model = FakeLocalModel(768)
+    e = Embedder(local_settings, cache_path=tmp_path / "emb.jsonl", local_model=model)
+    e.embed(["same"], "query")
+    e.embed(["same"], "document")
+    e.embed(["same"], "query")  # cached
+    assert len(model.calls) == 2
+
+
+def test_local_model_with_wrong_dims_rejected(local_settings, tmp_path):
+    e = Embedder(local_settings, cache_path=tmp_path / "emb.jsonl", local_model=FakeLocalModel(1024))
+    with pytest.raises(RuntimeError, match="1024 dims"):
+        e.embed(["x"])
+
+
+def test_local_provider_needs_no_openai_client(local_settings, monkeypatch):
+    import mmrag.llm
+
+    monkeypatch.setattr(mmrag.llm, "get_client", lambda s: pytest.fail("OpenAI client built"))
+    e = Embedder(local_settings, local_model=FakeLocalModel(768))
+    assert e.cache_path.name == "google--embeddinggemma-2-768.jsonl"  # no sub-folder from the "/"
+
+
+def test_openai_ignores_kind_so_its_cache_stays_valid(embedder_for):
+    client = FakeClient()
+    e = embedder_for(client)
+    e.embed(["same"], "query")
+    e.embed(["same"], "document")
+    assert client.calls == [(client.calls[0][0], ["same"], client.calls[0][2])]

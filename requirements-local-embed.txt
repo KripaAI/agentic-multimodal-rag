@@ -1,0 +1,7 @@
+# Phase 10 (optional): local embedding models for `embed.provider: local` (config.gemma.yaml).
+# Kept out of requirements.txt: PyTorch is large, and the default OpenAI setup does not need it.
+-r requirements.txt
+torch
+torchvision  # EmbeddingGemma 2's processor imports it, even for text only
+sentence-transformers>=6.1  # EmbeddingGemma 2 support (Google's developer guide)
+transformers

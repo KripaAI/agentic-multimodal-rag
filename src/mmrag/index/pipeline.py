@@ -55,7 +55,9 @@ def index_document(pdf: Path, settings: Settings, embedder: Embedder | None = No
                                          summary_cache(settings))
             for eid, summary in summaries.items():
                 doc.tables[eid] = doc.tables[eid].model_copy(update={"summary": summary})
-            links, unlinked = find_links(doc, embedder.embed, settings.enrich)
+            # Figure caption vs. nearby paragraph: a symmetric comparison.
+            links, unlinked = find_links(doc, lambda texts: embedder.embed(texts, "similarity"),
+                                         settings.enrich)
             span.set_attribute("mmrag.links", len(links))
             span.set_attribute("mmrag.unlinked", len(unlinked))
             span.set_attribute("mmrag.captions_needs_review", sum(c.status != "ok" for c in doc.captions.values()))
@@ -65,7 +67,7 @@ def index_document(pdf: Path, settings: Settings, embedder: Embedder | None = No
             for coll in ("text", "figure", "table"):
                 span.set_attribute(f"mmrag.chunks.{coll}", sum(c.collection == coll for c in chunks))
 
-        vectors = embedder.embed([c.dense_text for c in chunks])
+        vectors = embedder.embed([c.dense_text for c in chunks], "document")
         result = write_document(settings, doc, chunks, vectors, links)
         root.set_attribute("mmrag.write.result", result)
 

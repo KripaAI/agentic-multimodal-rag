@@ -38,7 +38,10 @@ def _check_database(settings: Settings) -> str:
         ).fetchone()[0]
         if nearest != 1:
             raise RuntimeError(f"HNSW query returned id {nearest}, expected 1")
-    return f"PostgreSQL {server}, pgvector {row[0]}, HNSW index OK"
+        db.check_embedding_dims(conn, settings)
+        dims, name = db.embedding_dims(conn), conn.info.dbname
+    return f"PostgreSQL {server}, pgvector {row[0]}, HNSW index OK, database {name}" + (
+        f", {dims}-dim embeddings" if dims else "")
 
 
 def _check_openai(settings: Settings) -> str:
@@ -46,13 +49,15 @@ def _check_openai(settings: Settings) -> str:
 
     client = get_client(settings)
     n_models = sum(1 for _ in client.models.list())
-    emb = client.embeddings.create(
-        model=settings.embed.model, input="phase 0 check", dimensions=settings.embed.dims
-    )
-    got = len(emb.data[0].embedding)
-    if got != settings.embed.dims:
-        raise RuntimeError(f"embedding has {got} dims, config says {settings.embed.dims}")
-    msg = f"{n_models} models visible; {settings.embed.model} returns {got} dims"
+    msg = f"{n_models} models visible"
+    if settings.embed.provider == "openai":  # a local model is checked on its own (_check_local_embedding)
+        emb = client.embeddings.create(
+            model=settings.embed.model, input="phase 0 check", dimensions=settings.embed.dims
+        )
+        got = len(emb.data[0].embedding)
+        if got != settings.embed.dims:
+            raise RuntimeError(f"embedding has {got} dims, config says {settings.embed.dims}")
+        msg += f"; {settings.embed.model} returns {got} dims"
     if settings.agent.model:
         chat = client.chat.completions.create(
             model=settings.agent.model,
@@ -65,11 +70,19 @@ def _check_openai(settings: Settings) -> str:
     return msg
 
 
+def _check_local_embedding(settings: Settings) -> str:
+    from mmrag.index.embed import Embedder
+
+    got = len(Embedder(settings).embed(["phase 0 check"], "query")[0])  # dims are checked inside
+    return f"{settings.embed.model} (local) returns {got} dims"
+
+
 def cmd_check(settings: Settings, args: argparse.Namespace) -> int:
     tracer = get_tracer("mmrag.cli")
     checks: list[tuple[str, Callable[[Settings], str], bool]] = [
         ("database", _check_database, True),
         ("openai", _check_openai, settings.secrets.openai_api_key is not None),
+        ("embedding", _check_local_embedding, settings.embed.provider == "local"),
     ]
     failed = False
     with tracer.start_as_current_span("phase0.check") as root:
@@ -77,7 +90,8 @@ def cmd_check(settings: Settings, args: argparse.Namespace) -> int:
         print("config    OK   config.yaml + .env loaded and validated")
         for name, fn, enabled in checks:
             if not enabled:
-                print(f"{name:<9} SKIP OPENAI_API_KEY not set in .env")
+                if name == "openai":
+                    print(f"{name:<9} SKIP OPENAI_API_KEY not set in .env")
                 continue
             with tracer.start_as_current_span(f"check.{name}") as span:
                 try:
@@ -102,6 +116,19 @@ def cmd_check(settings: Settings, args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------- db / models
+
+def cmd_db_create(settings: Settings, args: argparse.Namespace) -> int:
+    from psycopg.conninfo import conninfo_to_dict
+
+    from mmrag import db
+
+    name = conninfo_to_dict(settings.secrets.database_url.get_secret_value())["dbname"]
+    if db.create_database(settings):
+        print(f"Created database {name}. Next: mmrag db migrate")
+    else:
+        print(f"Database {name} already exists.")
+    return 0
+
 
 def cmd_db_migrate(settings: Settings, args: argparse.Namespace) -> int:
     from mmrag import db
@@ -539,8 +566,8 @@ def _judge(settings: Settings):
 
     if not settings.eval.judge_model:
         raise SystemExit("eval.judge_model is not set in config.yaml")
-    return Metrics(OpenAIJudge(get_client(settings), settings.eval.judge_model, settings.embed.model,
-                               settings.embed.dims))
+    return Metrics(OpenAIJudge(get_client(settings), settings.eval.judge_model, settings.eval.judge_embed_model,
+                               settings.eval.judge_embed_dims))
 
 
 def _eval_with_memory(settings: Settings, args: argparse.Namespace):
@@ -781,6 +808,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("models", help="list OpenAI models visible to your API key")
     db_parser = sub.add_parser("db", help="database commands")
     db_sub = db_parser.add_subparsers(dest="db_command", required=True)
+    db_sub.add_parser("create", help="create the configured database if it does not exist (e.g. database_name)")
     db_sub.add_parser("migrate", help="apply pending SQL migrations")
     db_backup = db_sub.add_parser("backup", help="dump the whole database (default: data/backups/)")
     db_backup.add_argument("--out")
@@ -922,7 +950,7 @@ def main(argv: list[str] | None = None) -> int:
     handlers = {
         "check": cmd_check,
         "models": cmd_models,
-        "db": {"migrate": cmd_db_migrate, "backup": cmd_db_backup, "restore": cmd_db_restore,
+        "db": {"create": cmd_db_create, "migrate": cmd_db_migrate, "backup": cmd_db_backup, "restore": cmd_db_restore,
                "verify-restore": cmd_db_verify_restore}.get(getattr(args, "db_command", None)),
         "profile": cmd_profile,
         "ingest": {"parse": cmd_ingest_parse, "index": cmd_ingest_index,
@@ -961,6 +989,10 @@ def _friendly_error(e: Exception) -> str | None:
         return ("Windows Smart App Control blocked a library this command needs. Run it in Linux instead: "
                 "docker compose run --rm ingest <the same command>, e.g. docker compose run --rm ingest "
                 "ingest index \"file.pdf\" (see docs/07-operations.md).")
+    from mmrag.db import EmbeddingDimsMismatch
+
+    if isinstance(e, EmbeddingDimsMismatch):
+        return text
     if isinstance(e, psycopg.OperationalError):
         return ("Cannot reach the database. Start it with `docker compose up -d` and check DATABASE_URL in .env.")
     if isinstance(e, MissingApiKey):

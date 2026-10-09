@@ -9,5 +9,12 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends chromium && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt /tmp/requirements.txt
 RUN pip install -r /tmp/requirements.txt pytest
+# Phase 10: LOCAL_EMBED=1 adds a local embedding model's packages (CPU PyTorch) for config.gemma.yaml.
+ARG LOCAL_EMBED=0
+COPY requirements-local-embed.txt /tmp/requirements-local-embed.txt
+RUN if [ "$LOCAL_EMBED" = "1" ]; then \
+      pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu && \
+      pip install -r /tmp/requirements-local-embed.txt; \
+    fi
 
 ENTRYPOINT ["python", "-m", "mmrag.cli"]
