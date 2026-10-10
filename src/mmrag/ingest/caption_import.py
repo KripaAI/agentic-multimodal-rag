@@ -14,6 +14,7 @@ import json
 import re
 
 from mmrag.config import Settings
+from mmrag.fsutil import jsonl_lines
 from mmrag.ingest.captions import CaptionCache, CaptionRecord, load_records
 
 _NUMBER = r"-?\d[\d,]*(?:\.\d+)?"
@@ -96,7 +97,7 @@ def import_captions(run_file: Path, doc_id: str, settings: Settings) -> ImportRe
     el_file = settings.resolve(settings.paths.data_dir) / "elements" / doc_id / "elements.jsonl"
     pdf_text = {}
     if el_file.is_file():
-        for line in el_file.read_text(encoding="utf-8").splitlines():
+        for line in jsonl_lines(el_file):
             e = json.loads(line)
             if e["type"] == "vector_figure" and e.get("text"):
                 pdf_text[e["element_id"]] = e["text"]

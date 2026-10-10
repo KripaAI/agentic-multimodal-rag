@@ -13,6 +13,8 @@ from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError, model_validator
 
+from mmrag.fsutil import jsonl_lines
+
 MAX_VISIBLE_TEXT = 80  # labels in the densest pilot figure: about 40
 MAX_LABEL_CHARS = 300  # one label; stops a loop inside a single string
 
@@ -98,7 +100,7 @@ class CaptionCache:
         self.path = path
         self._records: dict[str, CaptionRecord] = {}
         if path.is_file():
-            for line in path.read_text(encoding="utf-8").splitlines():
+            for line in jsonl_lines(path):
                 if line.strip():
                     r = CaptionRecord.model_validate_json(line)
                     self._records[cache_key(r.image_hash, r.model_path, r.prompt_version)] = r
@@ -123,7 +125,7 @@ def load_records(path: Path) -> tuple[list[CaptionRecord], list[str]]:
     """Re-validate a `captions.jsonl` from the GPU job. Lines that fail validation are
     returned as error messages, never silently dropped (P1)."""
     records, errors = [], []
-    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+    for n, line in enumerate(jsonl_lines(path), 1):
         if not line.strip():
             continue
         try:

@@ -9,6 +9,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from mmrag.fsutil import jsonl_lines
 from mmrag.config import Settings
 from mmrag.ingest.captions import CaptionRecord, load_records
 from mmrag.ingest.ids import doc_id as compute_doc_id
@@ -65,10 +66,10 @@ def load_document(pdf: Path, settings: Settings) -> LoadedDoc:
     el_file = data / "elements" / did / "elements.jsonl"
     if not el_file.is_file():
         raise FileNotFoundError(f"no parse output for {pdf.name}; run `mmrag ingest parse {pdf.name}` first")
-    elements = [Element.model_validate_json(x) for x in el_file.read_text(encoding="utf-8").splitlines() if x]
+    elements = [Element.model_validate_json(x) for x in jsonl_lines(el_file) if x]
     elements.sort(key=lambda e: (e.page, e.bbox[1], e.bbox[0]))
     tab_file = data / "tables" / did / "tables.jsonl"
-    tables = [Table.model_validate_json(x) for x in tab_file.read_text(encoding="utf-8").splitlines() if x] \
+    tables = [Table.model_validate_json(x) for x in jsonl_lines(tab_file) if x] \
         if tab_file.is_file() else []
     cap_file = data / "captions" / did / "captions.jsonl"
     captions = load_records(cap_file)[0] if cap_file.is_file() else []

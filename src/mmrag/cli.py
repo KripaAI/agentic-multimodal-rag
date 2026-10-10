@@ -13,6 +13,7 @@ from typing import Callable
 
 from opentelemetry import trace
 
+from mmrag.fsutil import jsonl_lines
 from mmrag.config import PROJECT_ROOT, ConfigError, Settings, get_settings
 from mmrag.obs import get_logger, get_tracer, init_telemetry, shutdown_telemetry
 
@@ -744,8 +745,8 @@ def cmd_caption(settings: Settings, args: argparse.Namespace) -> int:
         if not el_file.is_file():
             print(f"No parse output for {pdf.name}; run `mmrag ingest parse {pdf.name}` first")
             return 1
-        elements = [Element.model_validate_json(x) for x in el_file.read_text(encoding="utf-8").splitlines() if x]
-        tables = [Table.model_validate_json(x) for x in tab_file.read_text(encoding="utf-8").splitlines() if x] \
+        elements = [Element.model_validate_json(x) for x in jsonl_lines(el_file) if x]
+        tables = [Table.model_validate_json(x) for x in jsonl_lines(tab_file) if x] \
             if tab_file.is_file() else []
         cache = None if args.pilot else CaptionCache(cache_path(settings))
         jobs = build_jobs(elements, tables, settings, cache=cache)
@@ -832,7 +833,7 @@ def cmd_transcribe(settings: Settings, args: argparse.Namespace) -> int:
         if not el_file.is_file():
             print(f"No parse output for {pdf.name}; run `mmrag ingest parse {pdf.name}` first")
             return 1
-        elements = [Element.model_validate_json(x) for x in el_file.read_text(encoding="utf-8").splitlines() if x]
+        elements = [Element.model_validate_json(x) for x in jsonl_lines(el_file) if x]
         hashes = {e.element_id: e.content_hash for e in elements}
         done = {i for i, r in load_transcripts(cdir / "transcripts.jsonl").items() if r.image_hash == hashes.get(i)}
         jobs = build_page_jobs(elements, done)

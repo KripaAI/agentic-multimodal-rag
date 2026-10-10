@@ -12,6 +12,8 @@ import os
 from html import escape
 from pathlib import Path
 
+from mmrag.fsutil import jsonl_lines
+
 MODEL_ORDER = ["awq-7b", "nf4-7b", "3b"]
 _STYLE = """
 :root { --bg:#f6f7f9; --panel:#fff; --ink:#1b2330; --muted:#5a6475; --line:#d3d9e1;
@@ -42,7 +44,7 @@ code { font:12px ui-monospace, Consolas, monospace; }
 
 
 def _load(path: Path) -> list[dict]:
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()] \
+    return [json.loads(line) for line in jsonl_lines(path) if line.strip()] \
         if path.is_file() else []
 
 

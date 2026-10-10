@@ -15,6 +15,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from mmrag.config import Settings
+from mmrag.fsutil import jsonl_lines
 
 BLANK_PAGE = "[blank page]"
 
@@ -40,7 +41,7 @@ def load_transcripts(path: Path) -> dict[str, TranscriptRecord]:
     if not path.is_file():
         return {}
     out = {}
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in jsonl_lines(path):
         if line:
             r = TranscriptRecord.model_validate_json(line)
             if r.status == "ok" and r.text.strip() and r.text.strip() != BLANK_PAGE:
@@ -66,11 +67,11 @@ def import_transcripts(run_file: Path, doc_id: str, settings: Settings) -> Impor
         raise FileNotFoundError(f"no transcripts in {run_file}")
     existing = {}
     if target.is_file():
-        for line in target.read_text(encoding="utf-8").splitlines():
+        for line in jsonl_lines(target):
             if line:
                 r = TranscriptRecord.model_validate_json(line)
                 existing[r.element_id] = r
-    for n, line in enumerate(run_file.read_text(encoding="utf-8").splitlines(), 1):
+    for n, line in enumerate(jsonl_lines(run_file), 1):
         if not line:
             continue
         try:

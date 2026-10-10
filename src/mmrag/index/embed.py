@@ -24,6 +24,7 @@ from typing import Callable, Literal
 
 import openai
 
+from mmrag.fsutil import jsonl_lines
 from mmrag.config import Settings
 from mmrag.obs import get_logger, get_tracer
 
@@ -80,7 +81,7 @@ class Embedder:
         self._cache: dict[str, list[float]] = {}
         if self.cache_path.is_file():
             damaged = 0
-            for line in self.cache_path.read_text(encoding="utf-8").splitlines():
+            for line in jsonl_lines(self.cache_path):
                 if line:
                     try:
                         row = json.loads(line)

@@ -16,6 +16,7 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict
 
+from mmrag.fsutil import jsonl_lines
 from mmrag.agent.ledger import numbers_in
 from mmrag.eval.dataset import GoldenItem
 
@@ -202,7 +203,7 @@ def promote(drafts_file: Path, golden_file: Path, ids: list[str]) -> int:
     """Copy the chosen drafts (in the given order) into the golden set, validated on the way."""
     from mmrag.eval.dataset import load_golden_set
 
-    by_id = {json.loads(line)["question_id"]: line for line in drafts_file.read_text(encoding="utf-8").splitlines() if line}
+    by_id = {json.loads(line)["question_id"]: line for line in jsonl_lines(drafts_file) if line}
     missing = [i for i in ids if i not in by_id]
     if missing:
         raise ValueError(f"not in the drafts: {missing}")

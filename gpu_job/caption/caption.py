@@ -106,6 +106,11 @@ TRANSCRIBE_MAX_TOKENS = 4096
 # ---------------------------------------------------------------- prompt and parsing
 
 
+def jsonl_lines(path: Path) -> list[str]:
+    """Non-blank lines, split on "\\n" only: str.splitlines() also splits on \\x85 inside JSON strings."""
+    return [line for line in path.read_text(encoding="utf-8").split("\n") if line.strip()]
+
+
 def build_prompt(template: str, job: dict) -> str:
     schema = json.dumps(FigureCaption.model_json_schema(), separators=(",", ":"))
     return template.format(
@@ -192,7 +197,7 @@ def run_jobs(jobs, backend, bundle: Path, out: Path, model_path: str, prompt_ver
                 d.write(job["element_id"] + "\n")
         print(f"[{model_path}] {min(i + batch_size, len(todo))}/{len(todo)} done", flush=True)
 
-    records = [json.loads(line) for line in (out / "captions.jsonl").read_text(encoding="utf-8").splitlines()]
+    records = [json.loads(line) for line in jsonl_lines(out / "captions.jsonl")]
     ok = sum(r["status"] == "ok" for r in records)
     report = {
         "model_path": model_path, "model_id": backend.model_id, "prompt_version": prompt_version,
@@ -239,7 +244,7 @@ def run_transcribe(jobs, backend, bundle: Path, out: Path, model_path: str, prom
                 d.write(job["element_id"] + "\n")
         print(f"[{model_path}] {min(i + batch_size, len(todo))}/{len(todo)} pages done", flush=True)
 
-    records = [json.loads(line) for line in (out / "transcripts.jsonl").read_text(encoding="utf-8").splitlines()]
+    records = [json.loads(line) for line in jsonl_lines(out / "transcripts.jsonl")]
     ok = sum(r["status"] == "ok" for r in records)
     report = {
         "task": "transcribe", "model_path": model_path, "model_id": backend.model_id,
@@ -427,7 +432,7 @@ def main() -> int:
         print(json.dumps(summary, indent=1))
         return 0
 
-    jobs = [json.loads(line) for line in (bundle / "jobs.jsonl").read_text(encoding="utf-8").splitlines() if line]
+    jobs = [json.loads(line) for line in jsonl_lines(bundle / "jobs.jsonl")]
     template = (bundle / run["prompt_file"]).read_text(encoding="utf-8")
     transcribe = run.get("task", "caption") == "transcribe"
     started = time.monotonic()
