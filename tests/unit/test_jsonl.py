@@ -11,7 +11,7 @@ from mmrag.ingest.models import Element
 pytestmark = pytest.mark.unit
 
 
-@pytest.mark.parametrize("odd", ["\x85", " ", " ", "\x0b", "\x0c", "\x1c"])
+@pytest.mark.parametrize("odd", ["\x85", "\u2028", "\u2029", "\x0b", "\x0c", "\x1c"])
 def test_a_record_with_a_unicode_line_break_stays_whole(tmp_path, odd):
     e = Element(element_id="d:p1:text:1", doc_id="d", source_file="x.pdf", page=1, bbox=(0, 0, 1, 1), type="text",
                 text=f"Select the lord{odd}of the 9th", content_hash="h")
