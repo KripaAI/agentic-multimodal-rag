@@ -14,6 +14,7 @@ from mmrag.index.chunk import build_figure_docs, chunk_text
 from mmrag.index.document import load_document
 from mmrag.ingest import kaggle_job
 from mmrag.ingest.bundle import TRANSCRIBE_MAX_PIXELS, build_page_jobs, write_bundle
+from mmrag.ingest.captions import CaptionRecord, FigureCaption
 from mmrag.ingest.ids import doc_id as compute_doc_id
 from mmrag.ingest.models import Element
 from mmrag.ingest.transcripts import import_transcripts, load_transcripts
@@ -167,4 +168,11 @@ def test_a_transcribed_page_is_indexed_as_text(parse_settings, tmp_path):
                for c in chunks)
     figure_ids = {eid for c in build_figure_docs(doc, []) for eid in c.element_ids}
     assert f"{did}:p2:scanned_page:1" not in figure_ids  # now text, not an image to describe
-    assert f"{did}:p3:scanned_page:1" in figure_ids      # not transcribed: still a page image
+    assert f"{did}:p3:scanned_page:1" not in figure_ids  # not transcribed, and nothing describes it
+
+    p3 = f"{did}:p3:scanned_page:1"
+    doc.captions[p3] = CaptionRecord(element_id=p3, image_hash="h3", status="ok", model_path="awq-7b", model_id="m",
+                                     prompt_version="v2", seconds=1.0, caption=FigureCaption(
+                                         figure_type="table_image", short_caption="Planetary friendship table",
+                                         detailed_description="d", visible_text=[], keywords=[], confidence="high"))
+    assert p3 in {eid for c in build_figure_docs(doc, []) for eid in c.element_ids}  # a captioned page image stays

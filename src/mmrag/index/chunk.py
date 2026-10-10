@@ -103,6 +103,10 @@ def build_figure_docs(doc: LoadedDoc, links: list[Link]) -> list[Chunk]:
             parts.append("Labels: " + " | ".join(fig.text.splitlines()))
         if fig.caption:
             parts.append(f"Caption: {fig.caption}")
+        if not parts:
+            # Nothing describes it: no VLM caption, no labels of its own, no printed caption. Typically
+            # the full-page image of a scanned book, whose words are the page's text or transcript.
+            continue
         if fig.section_path:
             parts.append("Section: " + " > ".join(fig.section_path))
         parts += [f"Context: {t}" for t in linked.get(fig.element_id, [])]

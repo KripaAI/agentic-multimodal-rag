@@ -49,6 +49,9 @@ class Parse(_Section):
     furniture_margin_ratio: float = Field(gt=0, lt=0.5)
     table_strategy: Literal["lines", "lines_strict", "text"]
     vector_heavy_drawings: int = Field(gt=0)
+    # PDF file names whose text layer cannot be trusted (a watermark, or a poor OCR layer over a scan):
+    # every page is treated as a scanned page, for `mmrag transcribe`.
+    scanned_for: list[str] = []
 
 
 class Caption(_Section):

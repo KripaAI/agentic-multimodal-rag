@@ -11,3 +11,12 @@ paths:
 
 observability:
   enabled: false   # long unattended ingestion: no trace viewer to export to
+
+parse:
+  # Hindi scans whose text layer is a watermark ("Free by Astrostudents") or a legacy-font encoding
+  # that extracts as gibberish: every page goes to `mmrag transcribe` instead.
+  scanned_for:
+    - lal-kitab-1941.pdf
+    - lal-kitab-vol-1-1952.pdf
+    - lal-kitab-vol-2-1952.pdf
+    - lal-kitab-vol-3-1952.pdf
