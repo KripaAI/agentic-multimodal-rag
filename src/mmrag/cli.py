@@ -810,6 +810,77 @@ def cmd_caption(settings: Settings, args: argparse.Namespace) -> int:
     return 2
 
 
+def cmd_transcribe(settings: Settings, args: argparse.Namespace) -> int:
+    """Scanned pages: the VLM copies each page's text on Kaggle; indexing then treats it as text."""
+    import datetime
+
+    from mmrag.ingest import kaggle_job
+    from mmrag.ingest.bundle import build_page_jobs, write_bundle
+    from mmrag.ingest.models import Element
+    from mmrag.ingest.transcripts import import_transcripts, load_transcripts
+
+    try:
+        (pdf,) = _pdf_paths(settings, [args.pdf])
+    except FileNotFoundError as e:
+        print(e)
+        return 1
+    did, cdir = _caption_dirs(settings, pdf)
+    bundle, runs = cdir / "pages_bundle", cdir / "transcribe_runs"
+
+    if args.transcribe_command == "bundle":
+        el_file = settings.resolve(settings.paths.data_dir) / "elements" / did / "elements.jsonl"
+        if not el_file.is_file():
+            print(f"No parse output for {pdf.name}; run `mmrag ingest parse {pdf.name}` first")
+            return 1
+        elements = [Element.model_validate_json(x) for x in el_file.read_text(encoding="utf-8").splitlines() if x]
+        hashes = {e.element_id: e.content_hash for e in elements}
+        done = {i for i, r in load_transcripts(cdir / "transcripts.jsonl").items() if r.image_hash == hashes.get(i)}
+        jobs = build_page_jobs(elements, done)
+        if not jobs:
+            print("Nothing to transcribe: no scanned pages, or every one is already transcribed.")
+            return 0
+        write_bundle(jobs, settings, bundle, models=[settings.caption.model_path], task="transcribe")
+        print(f"Bundle: {len(jobs)} scanned page(s) for {settings.caption.model_path} -> {bundle}")
+        return 0
+
+    if args.transcribe_command == "push":
+        if not (bundle / "run.json").is_file():
+            print(f"No bundle in {bundle}; run `mmrag transcribe bundle {pdf.name}` first")
+            return 1
+        ref = kaggle_job.push(bundle, did, settings, cdir / "pages_kernel", task="transcribe")
+        print(f"Started Kaggle job {ref}\nCheck progress with `mmrag transcribe status {pdf.name}` "
+              f"or at https://www.kaggle.com/code/{ref}")
+        return 0
+
+    if args.transcribe_command == "status":
+        print(kaggle_job.status(did, settings, task="transcribe"))
+        return 0
+
+    if args.transcribe_command == "pull":
+        run = runs / datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        kaggle_job.pull(did, settings, run, task="transcribe")
+        print(f"Downloaded to {run}")
+        summary = run / "summary.json"
+        if summary.is_file():
+            for m, rep in json.loads(summary.read_text(encoding="utf-8")).items():
+                print(f"  {m:<7} " + ("FAILED" if rep.get("failed") else f"{rep['ok']}/{rep['jobs']} pages ok, "
+                                      f"{rep['seconds_per_figure']}s per page"))
+        return 0
+
+    # import
+    try:
+        run = Path(args.run) if args.run else sorted(runs.glob("*"))[-1]
+    except IndexError:
+        print(f"No pulled runs in {runs}; run `mmrag transcribe pull {pdf.name}` first")
+        return 1
+    result = import_transcripts(run / settings.caption.model_path / "transcripts.jsonl", did, settings)
+    print(f"Imported {result.ok} page(s); {result.blank} blank; {result.needs_review} need review -> {result.path}")
+    for e in result.errors:
+        print(f"  invalid record, not imported: {e}")
+    print(f"Next: mmrag ingest index {pdf.name}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mmrag")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -949,6 +1020,16 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("pdf", help="PDF file name in paths.pdf_dir, or a path")
     for p in (c_report, c_import):
         p.add_argument("--run", help="a pulled run folder (default: the latest)")
+    tr_parser = sub.add_parser("transcribe", help="VLM transcription of scanned pages on Kaggle")
+    tr_sub = tr_parser.add_subparsers(dest="transcribe_command", required=True)
+    tr_sub.add_parser("bundle", help="package the scanned pages not yet transcribed")
+    tr_sub.add_parser("push", help="upload the pages and start the Kaggle GPU job")
+    tr_sub.add_parser("status", help="show the Kaggle job's status")
+    tr_sub.add_parser("pull", help="download the Kaggle job's transcripts")
+    t_import = tr_sub.add_parser("import", help="validate and store transcripts from a pulled run")
+    t_import.add_argument("--run", help="a pulled run folder (default: the latest)")
+    for p in tr_sub.choices.values():
+        p.add_argument("pdf", help="PDF file name in paths.pdf_dir, or a path")
     args = parser.parse_args(argv)
 
     try:
@@ -971,6 +1052,7 @@ def main(argv: list[str] | None = None) -> int:
         "ask-batch": cmd_ask_batch,
         "search-report": cmd_search_report,
         "caption": cmd_caption,
+        "transcribe": cmd_transcribe,
         "eval": cmd_eval,
         "user": cmd_user,
         "doc": cmd_doc,

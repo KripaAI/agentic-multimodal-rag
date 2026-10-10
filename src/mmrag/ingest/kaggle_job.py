@@ -20,26 +20,28 @@ from mmrag.fsutil import empty_dir
 JOB_SCRIPT = PROJECT_ROOT / "gpu_job" / "caption" / "caption.py"
 
 
-def dataset_slug(doc_id: str) -> str:
+def dataset_slug(doc_id: str, task: str = "caption") -> str:
     # Not "mmrag-caption-...": after a failed create, Kaggle kept those addresses reserved but empty.
-    return f"mmrag-bundle-{doc_id}"
+    return f"mmrag-bundle-{doc_id}" if task == "caption" else f"mmrag-pages-{doc_id}"
 
 
-def kernel_slug(doc_id: str) -> str:
-    return f"mmrag-captioner-{doc_id}"  # must differ from the dataset's: Kaggle titles are unique per user
+def kernel_slug(doc_id: str, task: str = "caption") -> str:
+    # Must differ from the dataset's: Kaggle titles are unique per user. Transcription has its own
+    # kernel, so it never replaces a document's captioning job or its outputs.
+    return f"mmrag-captioner-{doc_id}" if task == "caption" else f"mmrag-transcriber-{doc_id}"
 
 
-def dataset_metadata(user: str, doc_id: str) -> dict:
-    return {"title": f"mmrag bundle {doc_id}", "id": f"{user}/{dataset_slug(doc_id)}",
-            "licenses": [{"name": "other"}]}
+def dataset_metadata(user: str, doc_id: str, task: str = "caption") -> dict:
+    title = f"mmrag bundle {doc_id}" if task == "caption" else f"mmrag pages {doc_id}"
+    return {"title": title, "id": f"{user}/{dataset_slug(doc_id, task)}", "licenses": [{"name": "other"}]}
 
 
-def kernel_metadata(user: str, doc_id: str) -> dict:
+def kernel_metadata(user: str, doc_id: str, task: str = "caption") -> dict:
     """Private GPU script kernel reading the bundle dataset. Internet is on only so the
     job can download the model weights from Hugging Face."""
     return {
-        "id": f"{user}/{kernel_slug(doc_id)}",
-        "title": kernel_slug(doc_id),
+        "id": f"{user}/{kernel_slug(doc_id, task)}",
+        "title": kernel_slug(doc_id, task),
         "code_file": JOB_SCRIPT.name,
         "language": "python",
         "kernel_type": "script",
@@ -47,7 +49,7 @@ def kernel_metadata(user: str, doc_id: str) -> dict:
         "enable_gpu": True,
         "enable_internet": True,
         "machine_shape": "NvidiaTeslaT4",
-        "dataset_sources": [f"{user}/{dataset_slug(doc_id)}"],
+        "dataset_sources": [f"{user}/{dataset_slug(doc_id, task)}"],
         "competition_sources": [],
         "kernel_sources": [],
     }
@@ -81,33 +83,37 @@ def _wait_until_ready(dataset: str, timeout_s: int = 1800) -> None:
     raise RuntimeError(f"dataset {dataset} not ready after {timeout_s}s")
 
 
-def push(bundle: Path, doc_id: str, settings: Settings, workdir: Path) -> str:
+def push(bundle: Path, doc_id: str, settings: Settings, workdir: Path, task: str = "caption") -> str:
     """Upload (or version) the bundle dataset, then push and start the kernel. Returns
     the kernel reference `user/slug`."""
     user = settings.caption.kaggle_username
-    (bundle / "dataset-metadata.json").write_text(json.dumps(dataset_metadata(user, doc_id), indent=1), encoding="utf-8")
-    exists = subprocess.run([sys.executable, "-m", "kaggle", "datasets", "status", f"{user}/{dataset_slug(doc_id)}"],
+    (bundle / "dataset-metadata.json").write_text(json.dumps(dataset_metadata(user, doc_id, task), indent=1),
+                                                  encoding="utf-8")
+    exists = subprocess.run([sys.executable, "-m", "kaggle", "datasets", "status",
+                             f"{user}/{dataset_slug(doc_id, task)}"],
                             capture_output=True, text=True, encoding="utf-8", errors="replace").returncode == 0
     if exists:
         _kaggle("datasets", "version", "-p", str(bundle), "-m", "new bundle", "--dir-mode", "zip")
     else:
         _kaggle("datasets", "create", "-p", str(bundle), "--dir-mode", "zip")
-    _wait_until_ready(f"{user}/{dataset_slug(doc_id)}")
+    _wait_until_ready(f"{user}/{dataset_slug(doc_id, task)}")
 
     kernel_dir = empty_dir(workdir / "kernel")
     shutil.copyfile(JOB_SCRIPT, kernel_dir / JOB_SCRIPT.name)
-    (kernel_dir / "kernel-metadata.json").write_text(json.dumps(kernel_metadata(user, doc_id), indent=1),
+    (kernel_dir / "kernel-metadata.json").write_text(json.dumps(kernel_metadata(user, doc_id, task), indent=1),
                                                      encoding="utf-8")
     _kaggle("kernels", "push", "-p", str(kernel_dir))
-    return f"{user}/{kernel_slug(doc_id)}"
+    return f"{user}/{kernel_slug(doc_id, task)}"
 
 
-def status(doc_id: str, settings: Settings) -> str:
-    return _kaggle("kernels", "status", f"{settings.caption.kaggle_username}/{kernel_slug(doc_id)}").stdout.strip()
+def status(doc_id: str, settings: Settings, task: str = "caption") -> str:
+    return _kaggle("kernels", "status",
+                   f"{settings.caption.kaggle_username}/{kernel_slug(doc_id, task)}").stdout.strip()
 
 
-def pull(doc_id: str, settings: Settings, out: Path) -> Path:
-    """Download the kernel's output files (captions, reports, log) into `out`."""
+def pull(doc_id: str, settings: Settings, out: Path, task: str = "caption") -> Path:
+    """Download the kernel's output files (captions or transcripts, reports, log) into `out`."""
     out.mkdir(parents=True, exist_ok=True)
-    _kaggle("kernels", "output", f"{settings.caption.kaggle_username}/{kernel_slug(doc_id)}", "-p", str(out), "-o")
+    _kaggle("kernels", "output", f"{settings.caption.kaggle_username}/{kernel_slug(doc_id, task)}",
+            "-p", str(out), "-o")
     return out

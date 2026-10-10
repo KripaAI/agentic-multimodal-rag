@@ -13,6 +13,7 @@ from mmrag.config import Settings
 from mmrag.ingest.captions import CaptionRecord, load_records
 from mmrag.ingest.ids import doc_id as compute_doc_id
 from mmrag.ingest.models import Element, Table
+from mmrag.ingest.transcripts import load_transcripts
 
 
 class Link(BaseModel):
@@ -34,12 +35,16 @@ class LoadedDoc:
     elements: list[Element]  # reading order
     tables: dict[str, Table] = field(default_factory=dict)
     captions: dict[str, CaptionRecord] = field(default_factory=dict)
+    transcribed: set[str] = field(default_factory=set)  # scanned pages whose text the VLM transcribed
 
     def texts(self) -> list[Element]:
-        return [e for e in self.elements if e.type == "text" and e.status == "ok" and e.text]
+        """Paragraphs, and transcribed scanned pages: each is one block of text citing its whole page."""
+        return [e for e in self.elements if e.status == "ok" and e.text
+                and (e.type == "text" or e.element_id in self.transcribed)]
 
     def figures(self) -> list[Element]:
-        return [e for e in self.elements if e.type in ("vector_figure", "image", "scanned_page") and e.status == "ok"]
+        return [e for e in self.elements if e.type in ("vector_figure", "image", "scanned_page") and e.status == "ok"
+                and e.element_id not in self.transcribed]
 
     def table_elements(self) -> list[Element]:
         return [e for e in self.elements if e.type == "table" and e.element_id in self.tables]
@@ -67,5 +72,14 @@ def load_document(pdf: Path, settings: Settings) -> LoadedDoc:
         if tab_file.is_file() else []
     cap_file = data / "captions" / did / "captions.jsonl"
     captions = load_records(cap_file)[0] if cap_file.is_file() else []
+    # A transcript replaces a scanned page's few stray characters, if it was made from this very image.
+    transcripts = load_transcripts(data / "captions" / did / "transcripts.jsonl")
+    transcribed = set()
+    for i, e in enumerate(elements):
+        t = transcripts.get(e.element_id)
+        if e.type == "scanned_page" and t and t.image_hash == e.content_hash:
+            elements[i] = e.model_copy(update={"text": t.text})
+            transcribed.add(e.element_id)
     return LoadedDoc(doc_id=did, source_file=pdf.name, content_hash=_sha256(pdf), elements=elements,
-                     tables={t.element_id: t for t in tables}, captions={c.element_id: c for c in captions})
+                     tables={t.element_id: t for t in tables}, captions={c.element_id: c for c in captions},
+                     transcribed=transcribed)
