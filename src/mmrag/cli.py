@@ -839,15 +839,18 @@ def cmd_transcribe(settings: Settings, args: argparse.Namespace) -> int:
         if not jobs:
             print("Nothing to transcribe: no scanned pages, or every one is already transcribed.")
             return 0
-        write_bundle(jobs, settings, bundle, models=[settings.caption.model_path], task="transcribe")
-        print(f"Bundle: {len(jobs)} scanned page(s) for {settings.caption.model_path} -> {bundle}")
+        engine = "tesseract" if args.engine == "tesseract" else settings.caption.model_path
+        write_bundle(jobs, settings, bundle, models=[engine], task="transcribe")
+        print(f"Bundle: {len(jobs)} scanned page(s) for {engine} -> {bundle}")
         return 0
 
     if args.transcribe_command == "push":
         if not (bundle / "run.json").is_file():
             print(f"No bundle in {bundle}; run `mmrag transcribe bundle {pdf.name}` first")
             return 1
-        ref = kaggle_job.push(bundle, did, settings, cdir / "pages_kernel", task="transcribe")
+        models = json.loads((bundle / "run.json").read_text(encoding="utf-8"))["models"]
+        ref = kaggle_job.push(bundle, did, settings, cdir / "pages_kernel", task="transcribe",
+                              gpu=any(m != "tesseract" for m in models))
         print(f"Started Kaggle job {ref}\nCheck progress with `mmrag transcribe status {pdf.name}` "
               f"or at https://www.kaggle.com/code/{ref}")
         return 0
@@ -873,7 +876,11 @@ def cmd_transcribe(settings: Settings, args: argparse.Namespace) -> int:
     except IndexError:
         print(f"No pulled runs in {runs}; run `mmrag transcribe pull {pdf.name}` first")
         return 1
-    result = import_transcripts(run / settings.caption.model_path / "transcripts.jsonl", did, settings)
+    found = sorted(run.glob("*/transcripts.jsonl"))  # one folder per engine that ran
+    if len(found) != 1:
+        print(f"Expected one engine's transcripts in {run}, found {len(found)}")
+        return 1
+    result = import_transcripts(found[0], did, settings)
     print(f"Imported {result.ok} page(s); {result.blank} blank; {result.needs_review} need review -> {result.path}")
     for e in result.errors:
         print(f"  invalid record, not imported: {e}")
@@ -1022,7 +1029,9 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("--run", help="a pulled run folder (default: the latest)")
     tr_parser = sub.add_parser("transcribe", help="VLM transcription of scanned pages on Kaggle")
     tr_sub = tr_parser.add_subparsers(dest="transcribe_command", required=True)
-    tr_sub.add_parser("bundle", help="package the scanned pages not yet transcribed")
+    t_bundle = tr_sub.add_parser("bundle", help="package the scanned pages not yet transcribed")
+    t_bundle.add_argument("--engine", choices=["vlm", "tesseract"], default="vlm",
+                          help="vlm: caption.model_path on a GPU; tesseract: Hindi+English OCR on a CPU machine")
     tr_sub.add_parser("push", help="upload the pages and start the Kaggle GPU job")
     tr_sub.add_parser("status", help="show the Kaggle job's status")
     tr_sub.add_parser("pull", help="download the Kaggle job's transcripts")

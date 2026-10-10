@@ -176,3 +176,17 @@ def test_a_transcribed_page_is_indexed_as_text(parse_settings, tmp_path):
                                          figure_type="table_image", short_caption="Planetary friendship table",
                                          detailed_description="d", visible_text=[], keywords=[], confidence="high"))
     assert p3 in {eid for c in build_figure_docs(doc, []) for eid in c.element_ids}  # a captioned page image stays
+
+
+# ---------------------------------------------------------------- the tesseract engine (CPU)
+
+def test_a_cpu_engine_runs_without_a_gpu():
+    meta = kaggle_job.kernel_metadata("u", DOC, "transcribe", gpu=False)
+    assert meta["enable_gpu"] is False and "machine_shape" not in meta
+    assert kaggle_job.kernel_metadata("u", DOC, "transcribe")["machine_shape"] == "NvidiaTeslaT4"
+
+
+def test_tesseract_only_transcribes():
+    assert "tesseract" in gpu.MODELS and "tesseract" in gpu.CPU_ONLY
+    with pytest.raises(ValueError, match="only transcribes"):
+        gpu.load_model("tesseract", 0, structured=True)

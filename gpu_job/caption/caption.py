@@ -88,7 +88,11 @@ MODELS = {
     "awq-7b": "Qwen/Qwen2.5-VL-7B-Instruct-AWQ",
     "nf4-7b": "Qwen/Qwen2.5-VL-7B-Instruct",
     "3b": "Qwen/Qwen2.5-VL-3B-Instruct",
+    # Classic OCR, CPU only, transcription only: for printed scripts the VLM reads poorly. In the
+    # Phase 10 pilot Qwen2.5-VL dropped 3 of 10 Hindi pages and confused ग्रह with घर.
+    "tesseract": "tesseract-ocr hin+eng",
 }
+CPU_ONLY = {"tesseract"}
 MAX_NEW_TOKENS = 2048
 # Used only when retrying a failed figure. Pilot v2: applied to every figure, it blanked
 # table cells whose text was already in visible_text; pilot v3: without it, an identical
@@ -352,7 +356,40 @@ class VLLMBackend:
         return [o.outputs[0].text for o in outputs]
 
 
+class TesseractBackend:
+    """Tesseract with the Hindi and English models, one page per CPU core."""
+
+    def __init__(self, langs: str = "hin+eng"):
+        subprocess.run(["apt-get", "update", "-q"], check=True)
+        subprocess.run(["apt-get", "install", "-y", "-q", "tesseract-ocr", "tesseract-ocr-hin"], check=True)
+        _pip("pytesseract")
+        import pytesseract
+
+        os.environ["OMP_THREAD_LIMIT"] = "1"  # parallel pages, not threads inside one page
+        self.ocr, self.langs = pytesseract, langs
+        self.model_id = f"tesseract {pytesseract.get_tesseract_version()} {langs}"
+        self.workers = os.cpu_count() or 4
+        self.last_finish: list[str | None] = []
+
+    def generate(self, items, retry: bool = False):
+        from concurrent.futures import ThreadPoolExecutor
+
+        from PIL import Image
+
+        def one(path):
+            return self.ocr.image_to_string(Image.open(path), lang=self.langs)
+
+        with ThreadPoolExecutor(max_workers=self.workers) as pool:
+            out = list(pool.map(one, [image_path for _, _, image_path in items]))
+        self.last_finish = ["stop"] * len(out)  # OCR has no token limit to run into
+        return out
+
+
 def load_model(model_path: str, max_pixels: int, structured: bool = True):
+    if model_path == "tesseract":
+        if structured:
+            raise ValueError("tesseract only transcribes pages; it cannot caption figures")
+        return TesseractBackend()
     if model_path == "awq-7b":
         return VLLMBackend(model_path, max_pixels, structured)
     return TransformersBackend(model_path, max_pixels, structured)
@@ -403,8 +440,12 @@ def main() -> int:
         return 1
     print(f"[{args.model}] loaded {backend.model_id} in {time.monotonic() - started:.0f}s; GPU MB {gpu_memory_mb()}",
           flush=True)
-    runner = run_transcribe if transcribe else run_jobs
-    report = runner(jobs, backend, bundle, out / args.model, args.model, run["prompt_version"], template)
+    if transcribe:
+        batch = getattr(backend, "workers", 4)  # tesseract: one page per core
+        report = run_transcribe(jobs, backend, bundle, out / args.model, args.model, run["prompt_version"], template,
+                                batch_size=batch)
+    else:
+        report = run_jobs(jobs, backend, bundle, out / args.model, args.model, run["prompt_version"], template)
     report["load_seconds"] = round(time.monotonic() - started - report["seconds_this_run"], 1)
     (out / args.model / "run_report.json").write_text(json.dumps(report, indent=1) + "\n", encoding="utf-8")
     return 0

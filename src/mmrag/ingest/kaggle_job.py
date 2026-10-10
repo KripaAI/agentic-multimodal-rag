@@ -36,9 +36,9 @@ def dataset_metadata(user: str, doc_id: str, task: str = "caption") -> dict:
     return {"title": title, "id": f"{user}/{dataset_slug(doc_id, task)}", "licenses": [{"name": "other"}]}
 
 
-def kernel_metadata(user: str, doc_id: str, task: str = "caption") -> dict:
-    """Private GPU script kernel reading the bundle dataset. Internet is on only so the
-    job can download the model weights from Hugging Face."""
+def kernel_metadata(user: str, doc_id: str, task: str = "caption", gpu: bool = True) -> dict:
+    """Private script kernel reading the bundle dataset, on a GPU machine unless the job only runs
+    a CPU engine (tesseract), which would waste GPU quota. Internet is on for model downloads."""
     return {
         "id": f"{user}/{kernel_slug(doc_id, task)}",
         "title": kernel_slug(doc_id, task),
@@ -46,9 +46,9 @@ def kernel_metadata(user: str, doc_id: str, task: str = "caption") -> dict:
         "language": "python",
         "kernel_type": "script",
         "is_private": True,
-        "enable_gpu": True,
+        "enable_gpu": gpu,
         "enable_internet": True,
-        "machine_shape": "NvidiaTeslaT4",
+        **({"machine_shape": "NvidiaTeslaT4"} if gpu else {}),
         "dataset_sources": [f"{user}/{dataset_slug(doc_id, task)}"],
         "competition_sources": [],
         "kernel_sources": [],
@@ -83,7 +83,8 @@ def _wait_until_ready(dataset: str, timeout_s: int = 1800) -> None:
     raise RuntimeError(f"dataset {dataset} not ready after {timeout_s}s")
 
 
-def push(bundle: Path, doc_id: str, settings: Settings, workdir: Path, task: str = "caption") -> str:
+def push(bundle: Path, doc_id: str, settings: Settings, workdir: Path, task: str = "caption",
+         gpu: bool = True) -> str:
     """Upload (or version) the bundle dataset, then push and start the kernel. Returns
     the kernel reference `user/slug`."""
     user = settings.caption.kaggle_username
@@ -100,7 +101,7 @@ def push(bundle: Path, doc_id: str, settings: Settings, workdir: Path, task: str
 
     kernel_dir = empty_dir(workdir / "kernel")
     shutil.copyfile(JOB_SCRIPT, kernel_dir / JOB_SCRIPT.name)
-    (kernel_dir / "kernel-metadata.json").write_text(json.dumps(kernel_metadata(user, doc_id, task), indent=1),
+    (kernel_dir / "kernel-metadata.json").write_text(json.dumps(kernel_metadata(user, doc_id, task, gpu), indent=1),
                                                      encoding="utf-8")
     _kaggle("kernels", "push", "-p", str(kernel_dir))
     return f"{user}/{kernel_slug(doc_id, task)}"
