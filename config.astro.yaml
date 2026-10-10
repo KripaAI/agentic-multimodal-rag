@@ -1,0 +1,13 @@
+# Astrology library (data/pdfs/Astro_book): its own database, embedded with EmbeddingGemma 2.
+# Everything else comes from config.gemma.yaml and config.yaml.
+# Use it by setting MMRAG_CONFIG=config.astro.yaml.
+
+extends: config.gemma.yaml
+
+database_name: mmrag_astro
+
+paths:
+  pdf_dir: data/pdfs/Astro_book
+
+observability:
+  enabled: false   # long unattended ingestion: no trace viewer to export to

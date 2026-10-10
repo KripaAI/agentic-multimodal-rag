@@ -18,6 +18,7 @@ import hashlib
 import json
 import random
 import time
+from functools import lru_cache
 from pathlib import Path
 from typing import Callable, Literal
 
@@ -45,8 +46,10 @@ def _retryable(e: Exception) -> bool:
     return getattr(e, "status_code", None) in _RETRY_STATUS
 
 
+@lru_cache(maxsize=2)
 def load_local_model(model: str, dims: int):
-    """A sentence-transformers model, text tower only. Loaded once per Embedder, on first use."""
+    """A sentence-transformers model, text tower only. Loaded on first use and kept for the process:
+    loading takes tens of seconds, and indexing a library builds one Embedder per document."""
     try:
         import torch
         from sentence_transformers import SentenceTransformer
