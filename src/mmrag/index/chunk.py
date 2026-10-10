@@ -46,7 +46,11 @@ def _pieces(block: Element, limit: int) -> list[str]:
     tokens = _encoder().encode(block.text)
     if len(tokens) <= limit:
         return [block.text]
-    return [_encoder().decode(tokens[i:i + limit]) for i in range(0, len(tokens), limit)]
+    # Cut at token boundaries but slice the text by character: a token can hold part of a multi-byte
+    # character (Devanagari), and decoding a token range would leave U+FFFD on both sides of the cut.
+    _, offsets = _encoder().decode_with_offsets(tokens)
+    starts = sorted({offsets[i] for i in range(0, len(tokens), limit)})
+    return [block.text[a:b] for a, b in zip(starts, starts[1:] + [len(block.text)])]
 
 
 def chunk_text(doc: LoadedDoc, cfg: ChunkConfig) -> list[Chunk]:
