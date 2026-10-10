@@ -182,3 +182,22 @@ hit@10 is 0.963 for both; both miss the same question (c01).
 **Speed and cost.** Indexing the 4 PDFs: OpenAI a few cents; Gemma US$0 but slower (CPU, ~10+ minutes for ~700 search documents on this laptop). Query embedding is fast enough either way.
 
 **Decision (pending owner):** production stays on OpenAI. Keep `config.gemma.yaml` as a working option. Re-run this comparison with all 5 PDFs and VLM captions, then decide whether a full agent evaluation (~US$1) is worth it. A separate experiment worth more than this one: EmbeddingGemma 2 can embed the figure PNGs themselves, which targets the figure hit rate rather than text.
+
+### 11.1 With VLM captions (2026-10-10)
+
+The 72 figures of the three PDFs with indexed figures were captioned on Kaggle (Qwen-VL AWQ 7B, prompt v2, 72/72 valid, 10–15 s per figure; the job needed one fix, see the commit "remove torchaudio after installing vLLM"). Both databases were then re-indexed from the same captions and evaluated the same way (27 questions).
+
+| | OpenAI hit@5 | Gemma hit@5 | OpenAI MRR@10 | Gemma MRR@10 |
+|---|---|---|---|---|
+| **Overall** | 0.889 | **0.926** | 0.819 | **0.863** |
+| Text | 0.600 | **0.667** | 0.553 | **0.620** |
+| Figures | 1.000 | 1.000 | 0.955 | 0.955 |
+| Tables | 1.000 | 1.000 | 0.833 | **0.875** |
+
+**Captions matter more than the embedding model.** Figure MRR rose from 0.803 to 0.955 for OpenAI and from 0.730 to 0.955 for Gemma: with captions the right figure is almost always first, whichever model embeds it, and Gemma's earlier deficit on figures disappears.
+
+**Gemma now ties or leads in every row**, but by small margins on 27 questions (hit@5: one question). Text, where both models are weakest, is where Gemma's lead is steady across both runs (MRR 0.62 vs 0.55).
+
+**The link threshold is still untuned for Gemma:** with captions it leaves 0 figures unlinked in every PDF (OpenAI: 2 and 4), so some links are forced.
+
+**Updated reading:** Gemma is at least as good as OpenAI for search on this corpus, at no embedding cost. Before switching production: tune `link_min_score` for Gemma, add the fifth PDF, and confirm with a full agent evaluation (~US$1), since search scores do not measure answers.
