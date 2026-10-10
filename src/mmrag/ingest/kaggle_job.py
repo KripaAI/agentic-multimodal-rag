@@ -60,8 +60,9 @@ def _kaggle(*args: str) -> subprocess.CompletedProcess:
     env = {**os.environ, "PYTHONIOENCODING": "utf-8", "PYTHONUTF8": "1"}
     r = subprocess.run([sys.executable, "-m", "kaggle", *args], capture_output=True, text=True, env=env,
                        encoding="utf-8", errors="replace")
-    # The CLI exits 0 on some failures and only prints them (e.g. "Dataset creation error: ...").
-    if r.returncode != 0 or "creation error" in r.stdout.lower():
+    # The CLI exits 0 on some failures and only prints them ("Dataset creation error: ...", or
+    # "Kernel push error: Maximum batch GPU session count of 2 reached.").
+    if r.returncode != 0 or any(m in r.stdout.lower() for m in ("creation error", "push error")):
         raise RuntimeError(f"kaggle {' '.join(args)} failed:\n{r.stdout}{r.stderr}")
     return r
 

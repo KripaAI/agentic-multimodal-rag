@@ -45,6 +45,15 @@ def test_an_error_printed_with_exit_code_0_is_still_an_error(monkeypatch):
         kaggle_job._kaggle("datasets", "create", "-p", "x")
 
 
+def test_a_refused_kernel_push_is_an_error(monkeypatch):
+    # Phase 10: with two GPU jobs running, `kaggle kernels push` printed this, exited 0, and the
+    # job was reported as started although Kaggle never created it.
+    out = NS(returncode=0, stdout="Kernel push error: Maximum batch GPU session count of 2 reached.", stderr="")
+    monkeypatch.setattr(kaggle_job.subprocess, "run", lambda *a, **k: out)
+    with pytest.raises(RuntimeError, match="GPU session count"):
+        kaggle_job._kaggle("kernels", "push", "-p", "x")
+
+
 def test_bundle_datasets_use_the_mmrag_bundle_address():
     # mmrag-caption-<doc_id> addresses can get stuck on Kaggle after a failed create (Phase 5).
     meta = kaggle_job.dataset_metadata("someone", "abc")
