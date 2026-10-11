@@ -54,12 +54,18 @@ def test_bundle_holds_code_config_and_parse_outputs_not_pdfs(parse_settings, tmp
     e = Element(element_id=f"{did}:p1:text:1", doc_id=did, source_file="book.pdf", page=1, bbox=(0, 0, 9, 9),
                 type="text", text="Saturn rules Capricorn.", content_hash="t1")
     (data / "elements" / did / "elements.jsonl").write_text(e.model_dump_json() + "\n", encoding="utf-8")
+    (data / "captions" / did / "runs").mkdir(parents=True)
+    for name in ("captions.jsonl", "transcripts.jsonl", "charts.jsonl", "runs/old.jsonl"):
+        (data / "captions" / did / name).write_text("{}\n", encoding="utf-8")
 
     info = embed_bundle.build_bundle([pdf], parse_settings, PROJECT_ROOT / "config.gemma.yaml", tmp_path / "out",
                                      chat=lambda m, p: pytest.fail("no tables, so no summaries"))
     names = zipfile.ZipFile(info.path / "project.bundle").namelist()
     assert "src/mmrag/cli.py" in names and "config.gemma.yaml" in names and "config.yaml" in names
     assert not any(n.endswith(".pdf") for n in names)
+    for name in ("captions.jsonl", "transcripts.jsonl", "charts.jsonl"):  # everything indexing reads
+        assert f"data/captions/{did}/{name}" in names
+    assert f"data/captions/{did}/runs/old.jsonl" not in names  # pulled runs stay home
     manifest = json.loads((info.path / "manifest.json").read_text(encoding="utf-8"))
     assert manifest == {"book.pdf": {"doc_id": did, "sha256": embed_bundle._sha256(pdf)}}
     run = json.loads((info.path / "run.json").read_text(encoding="utf-8"))
