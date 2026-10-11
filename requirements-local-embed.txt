@@ -1,7 +1,10 @@
 # Phase 10 (optional): local embedding models for `embed.provider: local` (config.gemma.yaml).
 # Kept out of requirements.txt: PyTorch is large, and the default OpenAI setup does not need it.
 -r requirements.txt
-torch
-torchvision  # EmbeddingGemma 2's processor imports it, even for text only
+# Pinned: on this Windows laptop Smart App Control blocked torch 2.14's DLL (2026-10-11) and allows
+# 2.10. Install from the CPU index: pip install torch==2.10.0 torchvision==0.25.0
+#   --index-url https://download.pytorch.org/whl/cpu
+torch==2.10.0
+torchvision==0.25.0  # EmbeddingGemma 2's processor imports it, even for text only
 sentence-transformers>=6.1  # EmbeddingGemma 2 support (Google's developer guide)
 transformers

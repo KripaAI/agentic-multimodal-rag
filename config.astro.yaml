@@ -10,7 +10,10 @@ paths:
   pdf_dir: data/pdfs/Astro_book
 
 observability:
-  enabled: false   # long unattended ingestion: no trace viewer to export to
+  enabled: true
+  # Traces and JSON logs (data/logs/app.jsonl) are kept; nothing is exported, as no Phoenix runs on
+  # this machine (an unreachable exporter only adds timeouts). Set an endpoint here to view traces.
+  otlp_traces_endpoint: null
 
 parse:
   # Hindi scans whose text layer is a watermark ("Free by Astrostudents") or a legacy-font encoding

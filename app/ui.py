@@ -18,6 +18,7 @@ import streamlit as st
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # app/login.py
 import login  # noqa: E402
 
+from mmrag.agent.answer import source_pages
 from mmrag.auth import service  # noqa: E402
 from mmrag.config import Settings  # noqa: E402
 
@@ -117,9 +118,10 @@ def render_answer(answer: dict, key: str, settings: Settings) -> None:
             _md_table(cols, c.get("rows", []))
         _chips(b.get("citations", []), k)
     if answer.get("sources"):
-        with st.expander(f"Sources ({len(answer['sources'])})"):
-            for s in answer["sources"]:
-                st.markdown(f"- {s['source_file']}, p. {s['page']}")
+        pages = source_pages(answer["sources"])
+        with st.expander(f"Sources ({len(pages)} pages)"):
+            for f, pg, n in pages:
+                st.markdown(f"- {f}, p. {pg}" + (f" ({n} passages)" if n > 1 else ""))
 
 
 def source_panel(settings: Settings) -> None:

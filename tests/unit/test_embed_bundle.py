@@ -86,3 +86,12 @@ def test_the_newest_run_is_chosen_by_time_not_name(tmp_path):
     assert _newest_run(tmp_path).name == "20261011-130000"
     with pytest.raises(ValueError):
         _newest_run(tmp_path / "missing")
+
+
+def test_sources_are_shown_once_per_page():
+    from mmrag.agent.answer import source_pages
+
+    rows = [{"source_file": "a.pdf", "page": 67, "element_id": f"x:p67:text:{n}"} for n in range(9)]
+    rows += [{"source_file": "b.pdf", "page": 30, "element_id": "y:p30:text:1"},
+             {"source_file": "a.pdf", "page": 68, "element_id": "x:p68:text:1"}]
+    assert source_pages(rows) == [("a.pdf", 67, 9), ("b.pdf", 30, 1), ("a.pdf", 68, 1)]
