@@ -124,6 +124,15 @@ def search_text(ctx: ToolContext, query: str, k: int = 8) -> list[dict]:
              "related": _related(h)} for h in hits]
 
 
+def _placements(text: str) -> str | None:
+    """The "Placements:" line of a chart's search document (read off the chart by `mmrag charts
+    read`): where each planet sits. Returned on its own, as excerpts cut it off after the caption."""
+    for line in text.splitlines():
+        if line.startswith("Placements: "):
+            return line[len("Placements: "):]
+    return None
+
+
 def search_figures(ctx: ToolContext, query: str, k: int = 8) -> list[dict]:
     """Top figures: element_id, caption and description excerpt, page, related paragraphs."""
     hits = search(ctx.settings, query, "figure", k, embed_query=ctx.embed_query)
@@ -131,8 +140,11 @@ def search_figures(ctx: ToolContext, query: str, k: int = 8) -> list[dict]:
     for h in hits:
         eid = h.locations[0]["element_id"]
         ctx.ledger.add(Evidence(id=eid, kind="figure", text=h.dense_text))
-        out.append({"id": eid, "source_file": h.source_file, "page": h.locations[0]["page"],
-                    "description": h.dense_text[:700], "related": _related(h)})
+        hit = {"id": eid, "source_file": h.source_file, "page": h.locations[0]["page"],
+               "description": h.dense_text[:700], "related": _related(h)}
+        if placements := _placements(h.dense_text):
+            hit["placements"] = placements
+        out.append(hit)
     _record_related(ctx, hits)
     return out
 
@@ -169,10 +181,16 @@ def get_figure(ctx: ToolContext, element_id: str, view_image: bool = False) -> d
         for p in s["points"]:
             vals = [p["value"]] + ([round(p["value"] / 100, 10)] if percent else [])
             (exact if p["flag"] == "exact" else estimated).extend(vals)
+    doc = _one("SELECT dense_text FROM search_chunks WHERE collection = 'figure' AND %s = ANY(element_ids) LIMIT 1",
+               (element_id,), ctx.settings)
+    placements = _placements(doc[0]) if doc else None
     ctx.ledger.items.pop(element_id, None)  # replace the search stub with the full record
-    ctx.ledger.add(Evidence(id=element_id, kind="figure", text=f"{short}\n{desc}", numbers=exact, estimated=estimated))
+    text = f"{short}\n{desc}" + (f"\nPlacements: {placements}" if placements else "")
+    ctx.ledger.add(Evidence(id=element_id, kind="figure", text=text, numbers=exact, estimated=estimated))
     out = {"id": element_id, "source_file": source_file, "page": page, "pdf_caption": pdf_caption,
            "short_caption": short, "description": desc, "visible_text": visible, "chart_values": data}
+    if placements:
+        out["placements"] = placements  # read off the chart's grid: signs, and houses from the Lagna
     if view_image and asset:
         out["image_path"] = str(ctx.settings.resolve(ctx.settings.paths.data_dir) / asset)
     return out
