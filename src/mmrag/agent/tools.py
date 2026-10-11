@@ -13,7 +13,7 @@ from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Callable
+from typing import Annotated, Callable, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
@@ -77,6 +77,26 @@ class TableArgs(_Args):
 class PageArgs(_Args):
     source_file: str = Field(description="The PDF file name, as shown in results")
     page: int = Field(ge=1)
+
+
+Sign = Literal["Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo", "Libra", "Scorpio", "Sagittarius",
+               "Capricorn", "Aquarius", "Pisces"]
+
+
+class PlacementCondition(_Args):
+    body: Literal["Sun", "Moon", "Mars", "Mercury", "Jupiter", "Venus", "Saturn", "Rahu", "Ketu", "Lagna"]
+    houses: list[Annotated[int, Field(ge=1, le=12)]] | None = Field(
+        default=None, min_length=1, description="House(s) from the Lagna, any of them, e.g. [7] or kendras [1, 4, 7, 10]")
+    signs: list[Sign] | None = Field(default=None, min_length=1,
+                                     description="Sign(s), any of them, e.g. ['Leo'] or fire signs")
+
+
+class FindChartsArgs(_Args):
+    conditions: list[PlacementCondition] = Field(min_length=1, max_length=5,
+                                                 description="All must hold in the same chart")
+    kind: str = Field(default="Rasi chart", description="'Rasi chart' (birth chart), a divisional chart such as "
+                                                        "'Navamsa (D-9) chart', or 'any'")
+    k: int = Field(default=8, ge=1, le=20, description="How many charts to return")
 
 
 class RefValue(_Args):
@@ -160,6 +180,39 @@ def search_tables(ctx: ToolContext, query: str, k: int = 8) -> list[dict]:
                     "summary": h.dense_text[:700], "related": _related(h)})
     _record_related(ctx, hits)
     return out
+
+
+def find_charts(ctx: ToolContext, conditions: list[dict], kind: str = "Rasi chart", k: int = 8) -> dict:
+    """Charts where every condition holds (an exact query on placements read off the chart grids),
+    with how many there are in all. Each match can be cited and shown by its figure id."""
+    from mmrag.ingest.charts import ChartReading
+
+    where, params = [], []
+    for c in conditions:
+        clause, p = ["body = %s"], [c["body"]]
+        for col, key in (("house", "houses"), ("sign", "signs")):
+            if c.get(key):
+                clause.append(f"{col} = ANY(%s)")
+                p.append(list(c[key]))
+        where.append("(" + " AND ".join(clause) + ")")
+        params += p
+    match = (f"SELECT element_id, chart_no FROM chart_placements WHERE (kind = %s OR %s = 'any') AND "
+             f"({' OR '.join(where)}) GROUP BY element_id, chart_no HAVING count(DISTINCT body) = %s")
+    args = [kind, kind, *params, len({c["body"] for c in conditions})]
+    with db.connect(ctx.settings) as conn:
+        total = conn.execute(f"SELECT count(*) FROM ({match}) m", args).fetchone()[0]
+        rows = conn.execute(
+            f"SELECT m.element_id, m.chart_no, d.source_file, e.page, cp.kind, cp.lagna, "
+            f"json_object_agg(cp.body, cp.sign) FROM ({match}) m JOIN elements e USING (element_id) "
+            f"JOIN documents d USING (doc_id) JOIN chart_placements cp ON cp.element_id = m.element_id "
+            f"AND cp.chart_no = m.chart_no GROUP BY 1, 2, 3, 4, 5, 6 ORDER BY 3, 4, 1, 2 LIMIT %s",
+            [*args, k]).fetchall()
+    charts = []
+    for eid, n, source_file, page, ckind, lagna, placements in rows:
+        text = ChartReading(style="south_indian", kind=ckind, lagna=lagna, placements=placements).text()
+        ctx.ledger.add(Evidence(id=eid, kind="figure", text=text))
+        charts.append({"id": eid, "source_file": source_file, "page": page, "chart": n, "placements": text})
+    return {"total": total, "shown": len(charts), "charts": charts}
 
 
 # ---------------------------------------------------------------- fetch
@@ -293,6 +346,7 @@ TOOLS: dict[str, Callable] = {
     "search_text": search_text,
     "search_figures": search_figures,
     "search_tables": search_tables,
+    "find_charts": find_charts,
     "get_figure": get_figure,
     "get_table": get_table,
     "view_page": view_page,
@@ -301,7 +355,7 @@ TOOLS: dict[str, Callable] = {
 }
 
 _ARGS: dict[str, type[BaseModel]] = {
-    "search_text": SearchArgs, "search_figures": SearchArgs, "search_tables": SearchArgs,
+    "search_text": SearchArgs, "search_figures": SearchArgs, "search_tables": SearchArgs, "find_charts": FindChartsArgs,
     "get_figure": FigureArgs, "get_table": TableArgs, "view_page": PageArgs,
     "compute": ComputeArgs, "make_chart": ChartRequest,
 }
@@ -312,6 +366,11 @@ _DESCRIPTIONS = {
     "search_figures": "Search the figures (diagrams, charts, screenshots) by what they show. Returns figure ids "
                       "to cite, descriptions and related paragraphs.",
     "search_tables": "Search the tables by what they compare or contain. Returns table ids, summaries and columns.",
+    "find_charts": "Find horoscope charts by exact planet placements, e.g. Saturn in the 7th house, or Mars in Leo "
+                   "together with Jupiter in the 5th. Use it, not search_figures, whenever the question names a "
+                   "house or sign of a planet or the Lagna. Returns the total number of matching charts and the "
+                   "first ones, each with its figure id (to cite and show), page and all its placements. Tell "
+                   "the user the total, and name each chart shown by its page.",
     "get_figure": "Full description of one figure, including chart values flagged exact or estimated. "
                   "Set view_image to look at the image.",
     "get_table": "Every row of one table, exactly as printed. Use before quoting or charting its numbers.",

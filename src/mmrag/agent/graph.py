@@ -352,7 +352,7 @@ STEP_LABELS = {"plan": "Understanding the question", "compose": "Writing the ans
                "validate": "Checking the citations", "repair": "Fixing the citations",
                "give_up": "Removing unverified parts", "chart_nudge": "Checking whether a chart is needed"}
 TOOL_LABELS = {"search_text": "Searching the text", "search_figures": "Searching the figures",
-               "search_tables": "Searching the tables", "get_figure": "Reading a figure", "get_table": "Reading a table",
+               "search_tables": "Searching the tables", "find_charts": "Finding charts", "get_figure": "Reading a figure", "get_table": "Reading a table",
                "view_page": "Looking at a page", "compute": "Calculating", "make_chart": "Drawing a chart"}
 
 

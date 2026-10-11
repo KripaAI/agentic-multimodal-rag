@@ -39,6 +39,7 @@ class LoadedDoc:
     captions: dict[str, CaptionRecord] = field(default_factory=dict)
     transcribed: set[str] = field(default_factory=set)  # scanned pages whose text the VLM transcribed
     chart_text: dict[str, str] = field(default_factory=dict)  # figure -> planet placements read off the chart
+    charts: dict[str, list[dict]] = field(default_factory=dict)  # figure -> its charts (kind, lagna, placements)
 
     def texts(self) -> list[Element]:
         """Paragraphs, and transcribed scanned pages: each is one block of text citing its whole page."""
@@ -61,10 +62,10 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def _chart_text(path: Path, elements: list[Element]) -> dict[str, str]:
-    """Placements read off charts (`mmrag charts read`), for figures whose image is still the one read."""
+def _charts(path: Path, elements: list[Element]) -> dict[str, dict]:
+    """Charts read off figures (`mmrag charts read`), for figures whose image is still the one read."""
     hashes = {e.element_id: e.content_hash for e in elements}
-    return {eid: r["text"] for eid, r in chart_records(path).items() if r.get("text") and hashes.get(eid) == r["image_hash"]}
+    return {eid: r for eid, r in chart_records(path).items() if hashes.get(eid) == r["image_hash"]}
 
 
 def load_document(pdf: Path, settings: Settings, ids: tuple[str, str] | None = None) -> LoadedDoc:
@@ -84,6 +85,7 @@ def load_document(pdf: Path, settings: Settings, ids: tuple[str, str] | None = N
     captions = load_records(cap_file)[0] if cap_file.is_file() else []
     # A transcript replaces a scanned page's few stray characters, if it was made from this very image.
     transcripts = load_transcripts(data / "captions" / did / "transcripts.jsonl")
+    charts = _charts(data / "captions" / did / "charts.jsonl", elements)
     transcribed = set()
     for i, e in enumerate(elements):
         t = transcripts.get(e.element_id)
@@ -92,4 +94,6 @@ def load_document(pdf: Path, settings: Settings, ids: tuple[str, str] | None = N
             transcribed.add(e.element_id)
     return LoadedDoc(doc_id=did, source_file=pdf.name, content_hash=ids[1] if ids else _sha256(pdf), elements=elements,
                      tables={t.element_id: t for t in tables}, captions={c.element_id: c for c in captions},
-                     transcribed=transcribed, chart_text=_chart_text(data / "captions" / did / "charts.jsonl", elements))
+                     transcribed=transcribed,
+                     chart_text={eid: r["text"] for eid, r in charts.items() if r.get("text")},
+                     charts={eid: r["charts"] for eid, r in charts.items() if r.get("charts")})
