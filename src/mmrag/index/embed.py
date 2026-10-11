@@ -55,6 +55,8 @@ def load_local_model(model: str, dims: int):
         import torch
         from sentence_transformers import SentenceTransformer
     except ImportError as e:
+        if "Application Control policy" in str(e):
+            raise  # installed but blocked by Windows Smart App Control: the CLI explains that case
         raise RuntimeError("embed.provider is 'local': install requirements-local-embed.txt") from e
     # The model card: bfloat16 or float32, never float16. CPUs get float32.
     dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float32
