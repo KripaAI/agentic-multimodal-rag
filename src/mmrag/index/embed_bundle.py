@@ -89,8 +89,11 @@ def build_bundle(pdfs: list[Path], settings: Settings, config_file: Path, out: P
         wanted = [summary_cache(settings)]
         for entry in manifest.values():
             did = entry["doc_id"]
-            wanted += [data / "elements" / did / "elements.jsonl", data / "tables" / did / "tables.jsonl",
-                       data / "captions" / did / "captions.jsonl", data / "captions" / did / "transcripts.jsonl"]
+            wanted += [data / "elements" / did / "elements.jsonl", data / "tables" / did / "tables.jsonl"]
+            # Every record indexing reads beside the captions: captions, transcripts, chart placements.
+            # (Listing them by name once left charts.jsonl out: the job then embedded figure texts
+            # without placements, and the laptop had to embed the real ones on its CPU.)
+            wanted += sorted((data / "captions" / did).glob("*.jsonl"))
         for f in wanted:  # under data/ wherever paths.data_dir is; the job's config points there
             if f.is_file():
                 z.write(f, "data/" + f.relative_to(data).as_posix())
