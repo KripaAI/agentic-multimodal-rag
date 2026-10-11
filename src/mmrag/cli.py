@@ -987,7 +987,7 @@ def cmd_charts(settings: Settings, args: argparse.Namespace) -> int:
     """Read planet placements off South Indian charts among the captioned figures (OCR on this machine)."""
     import time
 
-    from mmrag.ingest.charts import read_chart
+    from mmrag.ingest.charts import read_charts
     from mmrag.ingest.ids import doc_id
     from mmrag.ingest.models import Element
 
@@ -1021,15 +1021,16 @@ def cmd_charts(settings: Settings, args: argparse.Namespace) -> int:
             img = cv2.imread(str(data / e.asset_path))
             if img is None:
                 continue
-            r = read_chart(img, ocr)
-            charts += r.style == "south_indian"
-            rows.append(json.dumps({"element_id": e.element_id, "image_hash": e.content_hash, "style": r.style,
-                                    "kind": r.kind, "lagna": r.lagna, "placements": r.placements,
-                                    "unread": r.unread, "text": r.text()}, ensure_ascii=False))
+            found = read_charts(img, ocr)
+            charts += len(found)
+            rows.append(json.dumps({"element_id": e.element_id, "image_hash": e.content_hash,
+                                    "charts": [{"kind": r.kind, "lagna": r.lagna, "placements": r.placements,
+                                                "unread": r.unread} for r in found],
+                                    "text": " ".join(r.text() for r in found if r.text())}, ensure_ascii=False))
         (data / "captions" / did / "charts.jsonl").write_text("\n".join(rows) + "\n", encoding="utf-8")
         total["charts"] += charts
         total["figures"] += len(rows)
-        print(f"{pdf.name}: {charts} South Indian chart(s) among {len(rows)} figures ({time.monotonic() - t:.0f} s)")
+        print(f"{pdf.name}: {charts} South Indian chart(s) in {len(rows)} figures ({time.monotonic() - t:.0f} s)")
     print(f"Read {total['charts']} charts among {total['figures']} figures. Next: re-index these PDFs "
           "(mmrag embed bundle ... or mmrag ingest index ...)")
     return 0

@@ -110,3 +110,33 @@ def test_a_charts_figure_document_carries_its_placements(parse_settings, tmp_pat
     docs = {c.element_ids[0]: c.dense_text for c in build_figure_docs(load_document(pdf, parse_settings), [])}
     assert "Placements: Rasi chart, Lagna Aries. Saturn in Sagittarius (9th house)." in docs[f"{did}:p29:image:1"]
     assert "Placements" not in docs[f"{did}:p29:image:2"]
+
+
+def test_two_charts_side_by_side_are_read_separately():
+    """Raman puts Rasi and Navamsa in one image, touching; the shared border is a double line."""
+    from mmrag.ingest.charts import read_charts
+
+    left, right = _grid(), _grid()
+    pair = np.full((H, 2 * W + 8), 255, np.uint8)
+    pair[:, :W], pair[:, W + 8:] = left, right
+    words = [_at(0, 1, "LAG"), _at(3, 0, "SAT"), _at(1, 1, "RASI")]
+    words += [[[(x + (W + 8) * 3, y) for x, y in box], t, c] for box, t, c in  # into the right chart
+              [_at(0, 2, "LAGNA"), _at(0, 0, "Merc. Jupit. Mcon"), _at(1, 1, "NAVAMSA")]]
+    charts = read_charts(pair, lambda img: words)
+    assert [c.kind for c in charts] == ["Rasi chart", "Navamsa (D-9) chart"]
+    assert charts[0].lagna == "Aries" and charts[0].house("Saturn") == 9
+    assert charts[1].lagna == "Taurus" and charts[1].placements == {
+        "Lagna": "Taurus", "Mercury": "Pisces", "Jupiter": "Pisces", "Moon": "Pisces"}
+
+
+def test_a_double_frame_and_unequal_outer_columns_are_still_a_grid():
+    img = _grid()
+    img[:, 6:8] = 0  # a second frame line just inside the first
+    img[:, 290:293] = 255  # move the right inner line: outer columns 64 vs 80 px wide
+    img[:, 274:277] = 0
+    assert grid_frame(img) is not None
+
+
+def test_stacked_labels():
+    assert split_label("Merc. Jupit. Mcon") == ["Mercury", "Jupiter", "Moon"]
+    assert split_label("A.L.") == [] and split_label("Sat.") == ["Saturn"]

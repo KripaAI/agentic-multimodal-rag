@@ -99,6 +99,9 @@ def _ordinal(n: int) -> str:
 def split_label(token: str) -> list[str]:
     """Bodies named in one OCR token, which may run several labels together ("VENSAT", "JUP MARS"),
     carry a retrograde mark ("JUPRX") or be slightly misread ("NOON" for MOON)."""
+    parts = [x for x in re.split(r"[\s.,;:/]+", token) if x]
+    if len(parts) > 1:  # "Merc. Jupit. Mcon": each name on its own; a part that is no name is skipped
+        return [b for part in parts for b in split_label(part)]
     t = re.sub(r"[^A-Z]", "", token.upper())
     whole = _match(t) or (_match(_RETRO.sub("", t)) if len(t) > 3 else [])
     if whole:
@@ -141,6 +144,13 @@ def _bounds(lines: list[int], size: int) -> list[float] | None:
     """The five cell boundaries along one axis of a South Indian grid, from its four full-length lines
     (frame, inner, inner, frame). The outer cells need not be a quarter: many books draw them thin and
     the middle band wide; the middle band's two cells split it at its midpoint."""
+    merged = []  # a double frame (two lines a few pixels apart) is one line
+    for v in lines:
+        if merged and v - merged[-1][-1] <= 0.04 * size:
+            merged[-1].append(v)
+        else:
+            merged.append([v])
+    lines = [sum(g) / len(g) for g in merged]
     if len(lines) != 4:
         return None
     a0, a1, b1, b0 = lines
@@ -148,8 +158,8 @@ def _bounds(lines: list[int], size: int) -> list[float] | None:
     if span < 0.5 * size:
         return None
     outer1, outer2 = a1 - a0, b0 - b1
-    if min(outer1, outer2) < 0.1 * span or abs(outer1 - outer2) > 0.25 * max(outer1, outer2):
-        return None  # not a symmetric frame: some other figure or a table
+    if min(outer1, outer2) < 0.1 * span or abs(outer1 - outer2) > 0.4 * max(outer1, outer2):
+        return None  # outer cells this unequal: some other figure or a table (Raman's differ by ~30%)
     return [a0, a1, (a1 + b1) / 2, b1, b0]
 
 
@@ -157,28 +167,48 @@ def grid_frame(gray: np.ndarray) -> tuple[list[float], list[float]] | None:
     """(column bounds, row bounds) of a South Indian 4x4 grid, or None. The test: exactly four
     full-length lines each way, symmetric about the centre (the centre box breaks the middle lines)."""
     dark = gray < 170
-    cols, rows = _bounds(_lines(dark, 0, 0.6), gray.shape[1]), _bounds(_lines(dark, 1, 0.6), gray.shape[0])
+
+    def axis(ax: int, size: int) -> list[float] | None:
+        # Lines broken where they meet others (Raman) fall short of 60% dark: lower the bar step by
+        # step until exactly the grid's four lines stand out.
+        for share in (0.6, 0.45, 0.35):
+            bounds = _bounds(_lines(dark, ax, share), size)
+            if bounds:
+                return bounds
+        return None
+
+    cols, rows = axis(0, gray.shape[1]), axis(1, gray.shape[0])
     if cols is None or rows is None:
         return None
     return cols, rows
 
 
-def read_chart(image: np.ndarray, ocr) -> ChartReading:
-    """`image`: BGR or grayscale array. `ocr(image) -> [(box, text, confidence)]`, box as four (x, y)
-    points (RapidOCR's output). The image is upscaled 3x for OCR: chart labels are small."""
+def chart_panels(gray: np.ndarray) -> list[tuple[int, int, int, int]]:
+    """(x0, y0, x1, y1) of each chart drawn in the image. Books put two charts in one image (Raman:
+    Rasi and Navamsa; a South Indian grid beside a North Indian diamond), so each outer, roughly
+    square frame is a panel. With none found, the whole image is the one panel."""
     import cv2
 
-    gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
+    _, ink = cv2.threshold(gray, 170, 255, cv2.THRESH_BINARY_INV)
+    contours, _ = cv2.findContours(ink, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    panels = []
+    for c in contours:
+        x, y, bw, bh = cv2.boundingRect(c)
+        if bw * bh >= 0.12 * w * h and 0.6 <= bw / bh <= 1.7 and min(bw, bh) >= 60:
+            panels.append((x, y, x + bw, y + bh))
+    return sorted(panels) or [(0, 0, w, h)]
+
+
+def _read_panel(gray: np.ndarray, words: list[tuple[float, float, str]]) -> ChartReading:
+    """One chart: `gray` is the panel, `words` are (x, y, text) in the panel's coordinates."""
     frame = grid_frame(gray)
     if frame is None:
         return ChartReading(style="not_south_indian")
     xb, yb = frame
-    big = cv2.resize(image, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
     reading = ChartReading(style="south_indian")
     centre_text = []
-    for box, text, conf in ocr(big) or []:
-        cx = sum(p[0] for p in box) / 12  # /4 points, /3 upscale
-        cy = sum(p[1] for p in box) / 12
+    for cx, cy, text in words:
         col, row = bisect.bisect(xb, cx) - 1, bisect.bisect(yb, cy) - 1
         if not (0 <= row <= 3 and 0 <= col <= 3):
             continue
@@ -195,6 +225,45 @@ def read_chart(image: np.ndarray, ocr) -> ChartReading:
             reading.placements.setdefault(body, sign)
     reading.kind = chart_kind(" ".join(centre_text))
     return reading
+
+
+def read_charts(image: np.ndarray, ocr) -> list[ChartReading]:
+    """Every South Indian chart in the image, left to right (none for other figures). `image`: BGR or
+    grayscale array. `ocr(image) -> [(box, text, confidence)]`, box as four (x, y) points (RapidOCR's
+    output); it runs once, on the image upscaled 3x (chart labels are small)."""
+    import cv2
+
+    gray = image if image.ndim == 2 else cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    candidates = chart_panels(gray)
+    h, w = gray.shape
+    if candidates == [(0, 0, w, h)] and w >= 1.6 * h:
+        # Two charts that touch (Raman: Rasi beside Navamsa) make one wide shape: split it at the
+        # full-height line nearest the middle.
+        cols = _lines(gray < 170, 0, 0.6)
+        if cols:
+            mid = min(cols, key=lambda c: abs(c - w / 2))
+            pair = [c for c in cols if 0 < abs(c - mid) <= 0.04 * w]  # the shared border is often a double line
+            if pair:
+                mid = (mid + pair[0]) / 2
+            if abs(mid - w / 2) <= 0.15 * w:
+                candidates = [(0, 0, int(mid), h), (int(mid), 0, w, h)]
+    panels = [p for p in candidates if grid_frame(gray[p[1]:p[3], p[0]:p[2]]) is not None]
+    if not panels:
+        return []
+    big = cv2.resize(image, None, fx=3, fy=3, interpolation=cv2.INTER_CUBIC)
+    words = [(sum(q[0] for q in box) / 12, sum(q[1] for q in box) / 12, text)  # /4 points, /3 upscale
+             for box, text, _ in (ocr(big) or [])]
+    out = []
+    for x0, y0, x1, y1 in panels:
+        inside = [(x - x0, y - y0, t) for x, y, t in words if x0 <= x < x1 and y0 <= y < y1]
+        out.append(_read_panel(gray[y0:y1, x0:x1], inside))
+    return out
+
+
+def read_chart(image: np.ndarray, ocr) -> ChartReading:
+    """The first South Indian chart in the image, or a "not_south_indian" reading."""
+    charts = read_charts(image, ocr)
+    return charts[0] if charts else ChartReading(style="not_south_indian")
 
 
 def chart_records(path) -> dict[str, dict]:
