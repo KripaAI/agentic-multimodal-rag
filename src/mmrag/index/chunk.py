@@ -107,6 +107,8 @@ def build_figure_docs(doc: LoadedDoc, links: list[Link]) -> list[Chunk]:
             parts.append("Labels: " + " | ".join(fig.text.splitlines()))
         if fig.caption:
             parts.append(f"Caption: {fig.caption}")
+        if fig.element_id in doc.chart_text:  # where each planet sits: the VLM caption only lists them
+            parts.append(f"Placements: {doc.chart_text[fig.element_id]}")
         if not parts:
             # Nothing describes it: no VLM caption, no labels of its own, no printed caption. Typically
             # the full-page image of a scanned book, whose words are the page's text or transcript.

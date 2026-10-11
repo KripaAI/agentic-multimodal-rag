@@ -14,6 +14,7 @@ from mmrag.config import Settings
 from mmrag.ingest.captions import CaptionRecord, load_records
 from mmrag.ingest.ids import doc_id as compute_doc_id
 from mmrag.ingest.models import Element, Table
+from mmrag.ingest.charts import chart_records
 from mmrag.ingest.transcripts import load_transcripts
 
 
@@ -37,6 +38,7 @@ class LoadedDoc:
     tables: dict[str, Table] = field(default_factory=dict)
     captions: dict[str, CaptionRecord] = field(default_factory=dict)
     transcribed: set[str] = field(default_factory=set)  # scanned pages whose text the VLM transcribed
+    chart_text: dict[str, str] = field(default_factory=dict)  # figure -> planet placements read off the chart
 
     def texts(self) -> list[Element]:
         """Paragraphs, and transcribed scanned pages: each is one block of text citing its whole page."""
@@ -57,6 +59,12 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: f.read(1 << 20), b""):
             h.update(chunk)
     return h.hexdigest()
+
+
+def _chart_text(path: Path, elements: list[Element]) -> dict[str, str]:
+    """Placements read off charts (`mmrag charts read`), for figures whose image is still the one read."""
+    hashes = {e.element_id: e.content_hash for e in elements}
+    return {eid: r["text"] for eid, r in chart_records(path).items() if r.get("text") and hashes.get(eid) == r["image_hash"]}
 
 
 def load_document(pdf: Path, settings: Settings, ids: tuple[str, str] | None = None) -> LoadedDoc:
@@ -84,4 +92,4 @@ def load_document(pdf: Path, settings: Settings, ids: tuple[str, str] | None = N
             transcribed.add(e.element_id)
     return LoadedDoc(doc_id=did, source_file=pdf.name, content_hash=ids[1] if ids else _sha256(pdf), elements=elements,
                      tables={t.element_id: t for t in tables}, captions={c.element_id: c for c in captions},
-                     transcribed=transcribed)
+                     transcribed=transcribed, chart_text=_chart_text(data / "captions" / did / "charts.jsonl", elements))

@@ -1,0 +1,4 @@
+# Phase 10 (optional): reading planet placements off horoscope charts (mmrag charts read).
+# OCR runs on ONNX Runtime, which Windows Smart App Control allows on this laptop.
+rapidocr_onnxruntime
+

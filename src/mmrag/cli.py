@@ -983,6 +983,58 @@ def cmd_embed(settings: Settings, args: argparse.Namespace) -> int:
     return cmd_ingest_index(settings, argparse.Namespace(pdf=sorted(manifest), no_db=False, manifest=None))
 
 
+def cmd_charts(settings: Settings, args: argparse.Namespace) -> int:
+    """Read planet placements off South Indian charts among the captioned figures (OCR on this machine)."""
+    import time
+
+    from mmrag.ingest.charts import read_chart
+    from mmrag.ingest.ids import doc_id
+    from mmrag.ingest.models import Element
+
+    try:
+        import cv2
+        from rapidocr_onnxruntime import RapidOCR
+    except ImportError:
+        print("Chart reading needs the OCR packages: pip install -r requirements-charts.txt")
+        return 1
+    try:
+        pdfs = _pdf_paths(settings, args.pdf)
+    except FileNotFoundError as e:
+        print(e)
+        return 1
+    data = settings.resolve(settings.paths.data_dir)
+    engine = RapidOCR()
+    ocr = lambda img: engine(img)[0]  # noqa: E731
+    total = {"charts": 0, "figures": 0}
+    for pdf in pdfs:
+        did = doc_id(pdf)
+        el_file, cap_file = data / "elements" / did / "elements.jsonl", data / "captions" / did / "captions.jsonl"
+        if not el_file.is_file() or not cap_file.is_file():
+            continue
+        captioned = {json.loads(x)["element_id"] for x in jsonl_lines(cap_file)}
+        figures = [e for e in (Element.model_validate_json(x) for x in jsonl_lines(el_file))
+                   if e.element_id in captioned and e.asset_path and e.type in ("image", "vector_figure")]
+        if not figures:
+            continue
+        t, rows, charts = time.monotonic(), [], 0
+        for e in figures:
+            img = cv2.imread(str(data / e.asset_path))
+            if img is None:
+                continue
+            r = read_chart(img, ocr)
+            charts += r.style == "south_indian"
+            rows.append(json.dumps({"element_id": e.element_id, "image_hash": e.content_hash, "style": r.style,
+                                    "kind": r.kind, "lagna": r.lagna, "placements": r.placements,
+                                    "unread": r.unread, "text": r.text()}, ensure_ascii=False))
+        (data / "captions" / did / "charts.jsonl").write_text("\n".join(rows) + "\n", encoding="utf-8")
+        total["charts"] += charts
+        total["figures"] += len(rows)
+        print(f"{pdf.name}: {charts} South Indian chart(s) among {len(rows)} figures ({time.monotonic() - t:.0f} s)")
+    print(f"Read {total['charts']} charts among {total['figures']} figures. Next: re-index these PDFs "
+          "(mmrag embed bundle ... or mmrag ingest index ...)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mmrag")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1126,6 +1178,10 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("pdf", help="PDF file name in paths.pdf_dir, or a path")
     for p in (c_report, c_import):
         p.add_argument("--run", help="a pulled run folder (default: the latest)")
+    ch_parser = sub.add_parser("charts", help="read planet placements off South Indian horoscope charts")
+    ch_sub = ch_parser.add_subparsers(dest="charts_command", required=True)
+    ch_read = ch_sub.add_parser("read", help="OCR the captioned figures and store charts.jsonl per PDF")
+    ch_read.add_argument("pdf", nargs="*", help="PDF file names in paths.pdf_dir (default: all)")
     em_parser = sub.add_parser("embed", help="compute embeddings on a Kaggle GPU into the local cache")
     em_sub = em_parser.add_subparsers(dest="embed_command", required=True)
     e_bundle = em_sub.add_parser("bundle", help="package the parse outputs of PDFs (default: all in pdf_dir)")
@@ -1172,6 +1228,7 @@ def main(argv: list[str] | None = None) -> int:
         "caption": cmd_caption,
         "transcribe": cmd_transcribe,
         "embed": cmd_embed,
+        "charts": cmd_charts,
         "eval": cmd_eval,
         "user": cmd_user,
         "doc": cmd_doc,
