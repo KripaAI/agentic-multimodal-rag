@@ -56,7 +56,7 @@ def test_bundle_holds_code_config_and_parse_outputs_not_pdfs(parse_settings, tmp
     (data / "elements" / did / "elements.jsonl").write_text(e.model_dump_json() + "\n", encoding="utf-8")
     (data / "captions" / did / "runs").mkdir(parents=True)
     for name in ("captions.jsonl", "transcripts.jsonl", "charts.jsonl", "runs/old.jsonl"):
-        (data / "captions" / did / name).write_text("{}\n", encoding="utf-8")
+        (data / "captions" / did / name).write_text("", encoding="utf-8")  # empty: valid, no records
 
     info = embed_bundle.build_bundle([pdf], parse_settings, PROJECT_ROOT / "config.gemma.yaml", tmp_path / "out",
                                      chat=lambda m, p: pytest.fail("no tables, so no summaries"))
