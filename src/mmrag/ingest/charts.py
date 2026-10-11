@@ -197,7 +197,19 @@ def chart_panels(gray: np.ndarray) -> list[tuple[int, int, int, int]]:
         x, y, bw, bh = cv2.boundingRect(c)
         if bw * bh >= 0.12 * w * h and 0.6 <= bw / bh <= 1.7 and min(bw, bh) >= 60:
             panels.append((x, y, x + bw, y + bh))
-    return sorted(panels) or [(0, 0, w, h)]
+    kept = []  # a drop shadow around a chart is a second, overlapping frame: one chart, read once
+    for p in sorted(panels, key=lambda p: -(p[2] - p[0]) * (p[3] - p[1])):
+        if not any(_overlap(p, k) >= 0.8 for k in kept):
+            kept.append(p)
+    return sorted(kept) or [(0, 0, w, h)]
+
+
+def _overlap(a: tuple[int, int, int, int], b: tuple[int, int, int, int]) -> float:
+    """Shared area as a share of the smaller box."""
+    ix = max(0, min(a[2], b[2]) - max(a[0], b[0]))
+    iy = max(0, min(a[3], b[3]) - max(a[1], b[1]))
+    smaller = min((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1]))
+    return ix * iy / smaller if smaller else 0.0
 
 
 def _read_panel(gray: np.ndarray, words: list[tuple[float, float, str]]) -> ChartReading:
