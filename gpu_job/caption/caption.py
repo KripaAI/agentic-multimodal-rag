@@ -412,11 +412,25 @@ def find_bundle() -> Path:
     raise SystemExit("bundle not found: no run.json next to the script or under /kaggle/input")
 
 
+def use_kaggle_hf_token() -> None:
+    """Sets HF_TOKEN from the Kaggle secret of that name, if the kernel has one attached (Add-ons >
+    Secrets in the Kaggle editor). The models are not gated: the token only lifts the Hub's rate
+    limit for anonymous downloads. It is never put in the bundle, which is uploaded as a dataset."""
+    if os.environ.get("HF_TOKEN"):
+        return
+    try:
+        from kaggle_secrets import UserSecretsClient
+        os.environ["HF_TOKEN"] = UserSecretsClient().get_secret("HF_TOKEN")
+    except Exception:  # noqa: BLE001 - not on Kaggle, or no such secret attached: download anonymously
+        pass
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", choices=sorted(MODELS), help="run one model path (default: all in run.json)")
     parser.add_argument("--out", default=os.environ.get("CAPTION_OUT", "/kaggle/working"))
     args = parser.parse_args()
+    use_kaggle_hf_token()  # inherited by the per-model subprocesses
     bundle = find_bundle()
     run = json.loads((bundle / "run.json").read_text(encoding="utf-8"))
     out = Path(args.out)
