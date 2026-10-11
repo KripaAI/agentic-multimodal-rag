@@ -61,3 +61,18 @@ def test_index_then_reindex_then_search(settings):
     hits = search(settings, query, "text", 3, embed_query=lambda q: embedder._vec(q))
     assert hits[0].chunk_id == report.chunks[0].chunk_id
     assert all(loc["page"] == 1 for loc in hits[0].locations)
+
+
+def test_index_no_db_skips_writing_to_database(settings):
+    pdf = settings.resolve(settings.paths.pdf_dir) / "p3.pdf"
+    write_outputs(parse_document(pdf, settings), pdf, settings)
+    embedder = FakeEmbedder(settings.embed.dims)
+
+    report = index_document(pdf, settings, embedder=embedder, chat=lambda model, prompt: "A summary.", no_db=True)
+    assert report.result == "cached (no-db)"
+    assert report.counts["figure"] == 2 and report.counts["text"] >= 1
+    assert report.link_report.is_file()
+    with db.connect(settings) as conn:
+        assert conn.execute("SELECT count(*) FROM search_chunks").fetchone()[0] == 0
+        assert conn.execute("SELECT count(*) FROM elements").fetchone()[0] == 0
+

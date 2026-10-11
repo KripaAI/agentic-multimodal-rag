@@ -333,24 +333,41 @@ def cmd_doc(settings: Settings, args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------- index and search (Phase 3)
 
 def cmd_ingest_index(settings: Settings, args: argparse.Namespace) -> int:
-    """Enrich, chunk, embed and write one parsed (and captioned) PDF to PostgreSQL."""
+    """Enrich, chunk, embed and write one or more parsed (and captioned) PDFs to PostgreSQL."""
     from mmrag.index.pipeline import index_document
 
-    try:
-        (pdf,) = _pdf_paths(settings, [args.pdf])
-        report = index_document(pdf, settings)
-    except FileNotFoundError as e:
-        print(e)
+    raw_names = getattr(args, "pdf", None)
+    names = raw_names if isinstance(raw_names, list) else ([raw_names] if raw_names else [])
+    manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8")) if getattr(args, "manifest", None) else None
+    if manifest is not None:  # the PDFs need not be here: their ids come from the manifest
+        pdf_dir = settings.resolve(settings.paths.pdf_dir)
+        paths = [pdf_dir / n for n in (names or sorted(manifest))]
+        unknown = [p.name for p in paths if p.name not in manifest]
+        if unknown:
+            print(f"Not in the manifest: {', '.join(unknown)}")
+            return 1
+    else:
+        try:
+            paths = _pdf_paths(settings, names)
+        except FileNotFoundError as e:
+            print(e)
+            return 1
+    if not paths:
+        print(f"No PDFs found in {settings.resolve(settings.paths.pdf_dir)}")
         return 1
-    methods = {m: sum(lk.method == m for lk in report.links) for m in ("explicit", "deictic", "related")}
-    review = sum(c.status != "ok" for c in report.doc.captions.values())
-    print(f"{report.doc.source_file}: {report.result}")
-    print(f"  search documents: {report.counts['text']} text, {report.counts['figure']} figure, "
-          f"{report.counts['table']} table")
-    print(f"  links: {methods['explicit']} explicit, {methods['deictic']} deictic, {methods['related']} related; "
-          f"{len(report.unlinked)} unlinked")
-    print(f"  captions needing review after the label check: {review}")
-    print(f"  link report: {report.link_report}")
+    no_db = getattr(args, "no_db", False)
+    for pdf in paths:
+        ids = (manifest[pdf.name]["doc_id"], manifest[pdf.name]["sha256"]) if manifest else None
+        report = index_document(pdf, settings, no_db=no_db, ids=ids)
+        methods = {m: sum(lk.method == m for lk in report.links) for m in ("explicit", "deictic", "related")}
+        review = sum(c.status != "ok" for c in report.doc.captions.values())
+        print(f"{report.doc.source_file}: {report.result}")
+        print(f"  search documents: {report.counts['text']} text, {report.counts['figure']} figure, "
+              f"{report.counts['table']} table")
+        print(f"  links: {methods['explicit']} explicit, {methods['deictic']} deictic, {methods['related']} related; "
+              f"{len(report.unlinked)} unlinked")
+        print(f"  captions needing review after the label check: {review}")
+        print(f"  link report: {report.link_report}")
     return 0
 
 
@@ -711,13 +728,20 @@ def _caption_dirs(settings: Settings, pdf: Path) -> tuple[str, Path]:
     return did, settings.resolve(settings.paths.data_dir) / "captions" / did
 
 
+def _newest_run(runs: Path) -> Path:
+    """The most recently pulled run folder. By time, not name: a folder named by hand (say
+    "local-test") sorts after the timestamped ones. ValueError when there is none."""
+    folders = [d for d in runs.glob("*") if d.is_dir()] if runs.is_dir() else []
+    return max(folders, key=lambda d: d.stat().st_mtime)
+
+
 def _latest_run(caption_dir: Path, run: str | None) -> Path:
     if run:
         return Path(run)
-    runs = sorted((caption_dir / "runs").glob("*")) if (caption_dir / "runs").is_dir() else []
-    if not runs:
-        raise FileNotFoundError(f"no pulled runs in {caption_dir / 'runs'}; run `mmrag caption pull` first")
-    return runs[-1]
+    try:
+        return _newest_run(caption_dir / "runs")
+    except ValueError:
+        raise FileNotFoundError(f"no pulled runs in {caption_dir / 'runs'}; run `mmrag caption pull` first") from None
 
 
 def cmd_caption(settings: Settings, args: argparse.Namespace) -> int:
@@ -873,8 +897,8 @@ def cmd_transcribe(settings: Settings, args: argparse.Namespace) -> int:
 
     # import
     try:
-        run = Path(args.run) if args.run else sorted(runs.glob("*"))[-1]
-    except IndexError:
+        run = Path(args.run) if args.run else _newest_run(runs)
+    except ValueError:
         print(f"No pulled runs in {runs}; run `mmrag transcribe pull {pdf.name}` first")
         return 1
     found = sorted(run.glob("*/transcripts.jsonl"))  # one folder per engine that ran
@@ -887,6 +911,76 @@ def cmd_transcribe(settings: Settings, args: argparse.Namespace) -> int:
         print(f"  invalid record, not imported: {e}")
     print(f"Next: mmrag ingest index {pdf.name}")
     return 0
+
+
+def cmd_embed(settings: Settings, args: argparse.Namespace) -> int:
+    """Embeddings on a Kaggle GPU: bundle parse outputs, run `ingest index --no-db` there, merge the
+    vectors it returns into the local cache. PostgreSQL stays local; `import --index` writes to it."""
+    import datetime
+    import os
+
+    from mmrag.index import embed_bundle
+    from mmrag.ingest import kaggle_job
+
+    key, work = embed_bundle.bundle_key(settings), embed_bundle.bundle_dir(settings)
+    bundle, runs = work / "bundle", work / "runs"
+
+    if args.embed_command == "bundle":
+        try:
+            pdfs = _pdf_paths(settings, args.pdf)
+        except FileNotFoundError as e:
+            print(e)
+            return 1
+        data = settings.resolve(settings.paths.data_dir)
+        from mmrag.ingest.ids import doc_id
+
+        parsed = [p for p in pdfs if (data / "elements" / doc_id(p) / "elements.jsonl").is_file()]
+        for p in sorted(set(pdfs) - set(parsed)):
+            print(f"  not parsed, left out: {p.name}")
+        if not parsed:
+            print("Nothing to bundle: parse the PDFs first (`mmrag ingest parse`).")
+            return 1
+        config_file = Path(os.environ.get("MMRAG_CONFIG") or PROJECT_ROOT / "config.yaml")
+        info = embed_bundle.build_bundle(parsed, settings, config_file, bundle)
+        print(f"Bundle: {info.documents} PDF(s), {info.megabytes} MB -> {info.path}")
+        return 0
+
+    if args.embed_command == "push":
+        if not (bundle / "run.json").is_file():
+            print(f"No bundle in {bundle}; run `mmrag embed bundle` first")
+            return 1
+        ref = kaggle_job.push(bundle, key, settings, work, task="embed", gpu=True)
+        print(f"Started Kaggle job {ref}\nCheck progress with `mmrag embed status` or at https://www.kaggle.com/code/{ref}")
+        return 0
+
+    if args.embed_command == "status":
+        print(kaggle_job.status(key, settings, task="embed"))
+        return 0
+
+    if args.embed_command == "pull":
+        run = runs / datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        kaggle_job.pull(key, settings, run, task="embed")
+        summary = run / "summary.json"
+        print(f"Downloaded to {run}")
+        if summary.is_file():
+            rep = json.loads(summary.read_text(encoding="utf-8"))
+            print(f"  {rep['vectors']} vectors for {rep['documents']} PDF(s) in {rep['seconds']}s on {rep['device']}"
+                  + (f"; the job exited with {rep['exit_code']}" if rep["exit_code"] else ""))
+        return 0
+
+    # import
+    try:
+        run = Path(args.run) if args.run else _newest_run(runs)
+    except ValueError:
+        print(f"No pulled runs in {runs}; run `mmrag embed pull` first")
+        return 1
+    added, seen = embed_bundle.merge_cache(run / "embeddings.jsonl", settings)
+    print(f"Merged into {embed_bundle.cache_file(settings).name}: {added} new vector(s), {seen} already cached")
+    if not args.index:
+        print("Next: mmrag ingest index <pdf ...> (every vector is now cached, so it only writes to PostgreSQL)")
+        return 0
+    manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+    return cmd_ingest_index(settings, argparse.Namespace(pdf=sorted(manifest), no_db=False, manifest=None))
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -911,8 +1005,12 @@ def main(argv: list[str] | None = None) -> int:
     ingest_sub = ingest_parser.add_subparsers(dest="ingest_command", required=True)
     parse_parser = ingest_sub.add_parser("parse", help="parse one PDF and build its review sheet")
     parse_parser.add_argument("pdf", help="PDF file name in paths.pdf_dir, or a path")
-    index_parser = ingest_sub.add_parser("index", help="enrich, chunk, embed and write one PDF to the database")
-    index_parser.add_argument("pdf", help="PDF file name in paths.pdf_dir, or a path")
+    index_parser = ingest_sub.add_parser("index", help="enrich, chunk, embed and write PDFs to the database")
+    index_parser.add_argument("pdf", nargs="*", help="PDF file name in paths.pdf_dir, or a path (default: all)")
+    index_parser.add_argument("--no-db", action="store_true",
+                              help="compute and cache embeddings only, without connecting or writing to PostgreSQL")
+    index_parser.add_argument("--manifest", help="JSON {pdf name: {doc_id, sha256}}: index from parse outputs "
+                                                 "alone, without the PDF files (the Kaggle embedding job)")
     cmp_parser = ingest_sub.add_parser("compare-summaries", help="table summaries from several models, side by side")
     cmp_parser.add_argument("pdf", help="PDF file name in paths.pdf_dir, or a path")
     cmp_parser.add_argument("--models", default="gpt-4o-mini,gpt-5.4-mini,gpt-5.4-nano")
@@ -1028,6 +1126,16 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("pdf", help="PDF file name in paths.pdf_dir, or a path")
     for p in (c_report, c_import):
         p.add_argument("--run", help="a pulled run folder (default: the latest)")
+    em_parser = sub.add_parser("embed", help="compute embeddings on a Kaggle GPU into the local cache")
+    em_sub = em_parser.add_subparsers(dest="embed_command", required=True)
+    e_bundle = em_sub.add_parser("bundle", help="package the parse outputs of PDFs (default: all in pdf_dir)")
+    e_bundle.add_argument("pdf", nargs="*", help="PDF file names in paths.pdf_dir")
+    em_sub.add_parser("push", help="upload the bundle and start the Kaggle GPU job")
+    em_sub.add_parser("status", help="show the Kaggle job's status")
+    em_sub.add_parser("pull", help="download the vectors the job computed")
+    e_import = em_sub.add_parser("import", help="merge pulled vectors into the local embedding cache")
+    e_import.add_argument("--run", help="a pulled run folder (default: the latest)")
+    e_import.add_argument("--index", action="store_true", help="then index the bundled PDFs (database writes only)")
     tr_parser = sub.add_parser("transcribe", help="VLM transcription of scanned pages on Kaggle")
     tr_sub = tr_parser.add_subparsers(dest="transcribe_command", required=True)
     t_bundle = tr_sub.add_parser("bundle", help="package the scanned pages not yet transcribed")
@@ -1063,6 +1171,7 @@ def main(argv: list[str] | None = None) -> int:
         "search-report": cmd_search_report,
         "caption": cmd_caption,
         "transcribe": cmd_transcribe,
+        "embed": cmd_embed,
         "eval": cmd_eval,
         "user": cmd_user,
         "doc": cmd_doc,

@@ -59,9 +59,10 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def load_document(pdf: Path, settings: Settings) -> LoadedDoc:
-    """Read elements, tables and captions written by `ingest parse` and `caption import`."""
-    did = compute_doc_id(pdf)
+def load_document(pdf: Path, settings: Settings, ids: tuple[str, str] | None = None) -> LoadedDoc:
+    """Read elements, tables and captions written by `ingest parse` and `caption import`. `ids`
+    (doc_id, sha256) stands in for reading the PDF when only its parse outputs are at hand."""
+    did = ids[0] if ids else compute_doc_id(pdf)
     data = settings.resolve(settings.paths.data_dir)
     el_file = data / "elements" / did / "elements.jsonl"
     if not el_file.is_file():
@@ -81,6 +82,6 @@ def load_document(pdf: Path, settings: Settings) -> LoadedDoc:
         if e.type == "scanned_page" and t and t.image_hash == e.content_hash:
             elements[i] = e.model_copy(update={"text": t.text})
             transcribed.add(e.element_id)
-    return LoadedDoc(doc_id=did, source_file=pdf.name, content_hash=_sha256(pdf), elements=elements,
+    return LoadedDoc(doc_id=did, source_file=pdf.name, content_hash=ids[1] if ids else _sha256(pdf), elements=elements,
                      tables={t.element_id: t for t in tables}, captions={c.element_id: c for c in captions},
                      transcribed=transcribed)

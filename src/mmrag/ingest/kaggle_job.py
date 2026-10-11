@@ -18,21 +18,29 @@ from mmrag.config import PROJECT_ROOT, Settings
 from mmrag.fsutil import empty_dir
 
 JOB_SCRIPT = PROJECT_ROOT / "gpu_job" / "caption" / "caption.py"
+EMBED_SCRIPT = PROJECT_ROOT / "gpu_job" / "embed" / "embed.py"
+_DATASET = {"caption": "mmrag-bundle", "transcribe": "mmrag-pages", "embed": "mmrag-embed"}
+_KERNEL = {"caption": "mmrag-captioner", "transcribe": "mmrag-transcriber", "embed": "mmrag-embedder"}
+
+
+def script_for(task: str) -> Path:
+    """Captioning and transcription share the VLM job; embedding has its own."""
+    return EMBED_SCRIPT if task == "embed" else JOB_SCRIPT
 
 
 def dataset_slug(doc_id: str, task: str = "caption") -> str:
     # Not "mmrag-caption-...": after a failed create, Kaggle kept those addresses reserved but empty.
-    return f"mmrag-bundle-{doc_id}" if task == "caption" else f"mmrag-pages-{doc_id}"
+    return f"{_DATASET[task]}-{doc_id}"
 
 
 def kernel_slug(doc_id: str, task: str = "caption") -> str:
     # Must differ from the dataset's: Kaggle titles are unique per user. Transcription has its own
     # kernel, so it never replaces a document's captioning job or its outputs.
-    return f"mmrag-captioner-{doc_id}" if task == "caption" else f"mmrag-transcriber-{doc_id}"
+    return f"{_KERNEL[task]}-{doc_id}"
 
 
 def dataset_metadata(user: str, doc_id: str, task: str = "caption") -> dict:
-    title = f"mmrag bundle {doc_id}" if task == "caption" else f"mmrag pages {doc_id}"
+    title = f"{_DATASET[task].replace('-', ' ')} {doc_id}"
     return {"title": title, "id": f"{user}/{dataset_slug(doc_id, task)}", "licenses": [{"name": "other"}]}
 
 
@@ -42,7 +50,7 @@ def kernel_metadata(user: str, doc_id: str, task: str = "caption", gpu: bool = T
     return {
         "id": f"{user}/{kernel_slug(doc_id, task)}",
         "title": kernel_slug(doc_id, task),
-        "code_file": JOB_SCRIPT.name,
+        "code_file": script_for(task).name,
         "language": "python",
         "kernel_type": "script",
         "is_private": True,
@@ -101,7 +109,7 @@ def push(bundle: Path, doc_id: str, settings: Settings, workdir: Path, task: str
     _wait_until_ready(f"{user}/{dataset_slug(doc_id, task)}")
 
     kernel_dir = empty_dir(workdir / "kernel")
-    shutil.copyfile(JOB_SCRIPT, kernel_dir / JOB_SCRIPT.name)
+    shutil.copyfile(script_for(task), kernel_dir / script_for(task).name)
     (kernel_dir / "kernel-metadata.json").write_text(json.dumps(kernel_metadata(user, doc_id, task, gpu), indent=1),
                                                      encoding="utf-8")
     _kaggle("kernels", "push", "-p", str(kernel_dir))

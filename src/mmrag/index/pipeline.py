@@ -34,17 +34,24 @@ def summary_cache(settings: Settings) -> Path:
     return settings.resolve(settings.paths.data_dir) / "cache" / "summaries.jsonl"
 
 
-def index_document(pdf: Path, settings: Settings, embedder: Embedder | None = None, chat=None) -> IndexReport:
-    """`chat(model, prompt) -> str` defaults to OpenAI; tests pass fakes for chat and the embedder."""
+def index_document(pdf: Path, settings: Settings, embedder: Embedder | None = None, chat=None,
+                   no_db: bool = False, ids: tuple[str, str] | None = None) -> IndexReport:
+    """`chat(model, prompt) -> str` defaults to OpenAI; tests pass fakes for chat and the embedder.
+    `no_db=True` computes and caches all embeddings but skips writing to PostgreSQL. `ids` is the
+    PDF's (doc_id, sha256) when the PDF itself is not at hand (the Kaggle embedding job)."""
     embedder = embedder or Embedder(settings)
     if chat is None:
         from mmrag.llm import complete, get_client
 
-        client = get_client(settings)
-        chat = lambda model, prompt: complete(client, model, prompt).text  # noqa: E731
+        clients = []
+
+        def chat(model, prompt):  # the client is made only for a table summary not yet cached
+            if not clients:
+                clients.append(get_client(settings))
+            return complete(clients[0], model, prompt).text
     tracer = get_tracer("mmrag.index")
     with tracer.start_as_current_span("ingest.document") as root:
-        doc = load_document(pdf, settings)
+        doc = load_document(pdf, settings, ids)
         root.set_attribute("mmrag.doc_id", doc.doc_id)
         root.set_attribute("mmrag.source_file", doc.source_file)
 
@@ -68,7 +75,10 @@ def index_document(pdf: Path, settings: Settings, embedder: Embedder | None = No
                 span.set_attribute(f"mmrag.chunks.{coll}", sum(c.collection == coll for c in chunks))
 
         vectors = embedder.embed([c.dense_text for c in chunks], "document")
-        result = write_document(settings, doc, chunks, vectors, links)
+        if no_db:
+            result = "cached (no-db)"
+        else:
+            result = write_document(settings, doc, chunks, vectors, links)
         root.set_attribute("mmrag.write.result", result)
 
     report = IndexReport(doc=doc, chunks=chunks, links=links, unlinked=unlinked, label_shares=shares, result=result,

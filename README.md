@@ -153,6 +153,24 @@ by mistake. The evaluation judge keeps its own embedding model (`eval.judge_embe
 from both databases are comparable. Keep only what measurably helps (P10); `DROP DATABASE
 mmrag_gemma` removes the experiment.
 
+## Embedding on a Kaggle GPU
+
+A local embedding model on a laptop CPU is slow (EmbeddingGemma 2: under one chunk a second on a
+2-core laptop). Kaggle's free T4 runs the same model about 20× faster. Only the embedding moves:
+PostgreSQL, the PDFs and the app stay on the laptop.
+
+```powershell
+mmrag embed bundle [pdf ...]      # parse outputs + code + config (no PDFs); table summaries made here first
+mmrag embed push                  # starts `mmrag ingest index --no-db` on a Kaggle GPU
+mmrag embed status
+mmrag embed pull                  # the vectors it computed
+mmrag embed import --index        # merge them into data/cache/embeddings/, then index: database writes only
+```
+
+The Kaggle job runs this project's own `ingest index --no-db`, so it embeds exactly the texts a local run
+would; `import` only adds vectors the local cache lacks and never replaces it. Uses `KAGGLE_API_TOKEN`
+and `caption.kaggle_username`, like captioning. `mmrag ingest index --no-db` also works locally.
+
 ## Tests
 
 Development is test-driven where it fits (constitution W5, LLD §10). Install the test tools with `pip install -r requirements-dev.txt`.

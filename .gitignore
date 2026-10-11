@@ -12,6 +12,7 @@ dist/
 
 # Test artifacts
 .pytest_cache/
+.pytest_tmp/
 .coverage
 htmlcov/
 
@@ -27,6 +28,7 @@ data/study/*
 data/eval/*
 data/security/*
 data/backups/*
+data/embed/*
 !data/**/.gitkeep
 
 # Editors / OS

@@ -58,10 +58,13 @@ def load_local_model(model: str, dims: int):
         if "Application Control policy" in str(e):
             raise  # installed but blocked by Windows Smart App Control: the CLI explains that case
         raise RuntimeError("embed.provider is 'local': install requirements-local-embed.txt") from e
-    # The model card: bfloat16 or float32, never float16. CPUs get float32.
-    dtype = torch.bfloat16 if torch.cuda.is_available() and torch.cuda.is_bf16_supported() else torch.float32
-    _log.info("loading local embedding model %s (%d dims, %s)", model, dims, dtype)
-    return SentenceTransformer(model, truncate_dim=dims, model_kwargs={"torch_dtype": dtype},
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    # The model card: bfloat16 or float32, never float16. bfloat16 only where the GPU has it natively
+    # (compute capability 8+); a T4 reports it as supported but emulates it, slower than float32.
+    native_bf16 = torch.cuda.is_available() and torch.cuda.get_device_capability()[0] >= 8
+    dtype = torch.bfloat16 if native_bf16 else torch.float32
+    _log.info("loading local embedding model %s (%d dims, %s, %s)", model, dims, dtype, device)
+    return SentenceTransformer(model, truncate_dim=dims, device=device, model_kwargs={"torch_dtype": dtype},
                                config_kwargs={"vision_config": None, "audio_config": None})
 
 
