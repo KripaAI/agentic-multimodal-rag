@@ -1036,6 +1036,54 @@ def cmd_charts(settings: Settings, args: argparse.Namespace) -> int:
     return 0
 
 
+# ---------------------------------------------------------------- astro (Phase 11)
+
+def _print_reading(reading, show_facts: bool) -> None:
+    from mmrag.astro.reading import sources_markdown
+
+    if show_facts and reading.facts:
+        print(reading.facts, end="\n\n")
+    print(reading.text or "(no text)")
+    if reading.cited:
+        print("\nSources:\n" + sources_markdown(reading))
+    for n in reading.notices:
+        print(f"\nNote: {n}")
+    print(f"\n[{reading.model} · {reading.seconds:.1f} s · {reading.input_tokens} tokens in, "
+          f"{reading.output_tokens} out · {len(reading.passages)} passages given, {len(reading.cited)} cited]")
+
+
+def cmd_astro(settings: Settings, args: argparse.Namespace) -> int:
+    """Birth charts computed by code; readings and answers written by the fine-tuned model."""
+    from datetime import date
+
+    from mmrag.astro.natal import ChartInputError, compute_chart, parse_birth
+    from mmrag.astro.reading import WriterNotConfigured, answer_question, write_reading
+
+    on = date.fromisoformat(args.on) if getattr(args, "on", None) else None
+    try:
+        if args.astro_command == "ask":
+            reading = answer_question(settings, args.question, writer=args.writer, use_books=not args.no_books)
+            _print_reading(reading, show_facts=False)
+            return 0
+        chart = compute_chart(parse_birth(args.date, args.time, args.tz, args.lat, args.lon, args.name, args.place))
+        if args.astro_command == "chart":
+            print(chart.facts(on))
+            return 0
+        reading = write_reading(settings, chart, question=args.question, writer=args.writer,
+                                use_books=not args.no_books, on=on)
+    except (ChartInputError, WriterNotConfigured) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
+    _print_reading(reading, show_facts=True)
+    if args.out:
+        from mmrag.astro.reading import sources_markdown
+
+        Path(args.out).write_text(f"{reading.facts}\n\n{reading.text}\n\n{sources_markdown(reading)}\n"
+                                  + "".join(f"\nNote: {n}" for n in reading.notices), encoding="utf-8")
+        print(f"Saved to {args.out}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mmrag")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -1205,6 +1253,27 @@ def main(argv: list[str] | None = None) -> int:
     t_import.add_argument("--run", help="a pulled run folder (default: the latest)")
     for p in tr_sub.choices.values():
         p.add_argument("pdf", help="PDF file name in paths.pdf_dir, or a path")
+    astro_parser = sub.add_parser("astro", help="birth charts and readings by the fine-tuned model (Phase 11)")
+    astro_sub = astro_parser.add_subparsers(dest="astro_command", required=True)
+    a_chart = astro_sub.add_parser("chart", help="compute a birth chart (no model involved)")
+    a_read = astro_sub.add_parser("reading", help="a chart reading written by the fine-tuned model")
+    for p in (a_chart, a_read):
+        p.add_argument("--date", required=True, help="birth date, YYYY-MM-DD")
+        p.add_argument("--time", required=True, help="local birth time, HH:MM (24-hour)")
+        p.add_argument("--tz", required=True, help="time zone, e.g. Asia/Kolkata, or an offset like +05:30")
+        p.add_argument("--lat", type=float, required=True, help="latitude, north positive (e.g. 28.6139)")
+        p.add_argument("--lon", type=float, required=True, help="longitude, east positive (e.g. 77.2090)")
+        p.add_argument("--name")
+        p.add_argument("--place", help="place name, shown in the reading only")
+        p.add_argument("--on", help="date for the running dasha, YYYY-MM-DD (default: today)")
+    a_read.add_argument("--question", help="a question about this chart instead of a full reading")
+    a_ask = astro_sub.add_parser("ask", help="a plain astrology question (model alone with --no-books)")
+    a_ask.add_argument("question")
+    for p in (a_read, a_ask):
+        p.add_argument("--writer", choices=["astro", "openai"], default="astro",
+                       help="astro: the fine-tuned model (WRITER_BASE_URL); openai: agent.model, to compare")
+        p.add_argument("--no-books", action="store_true", help="no library passages: the model alone")
+    a_read.add_argument("--out", help="also save the reading as a Markdown file")
     args = parser.parse_args(argv)
 
     try:
@@ -1235,6 +1304,7 @@ def main(argv: list[str] | None = None) -> int:
         "doc": cmd_doc,
         "obs": cmd_obs,
         "memory": cmd_memory,
+        "astro": cmd_astro,
     }
     try:
         return handlers[args.command](settings, args)

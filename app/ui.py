@@ -17,6 +17,7 @@ import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))  # app/login.py
 import login  # noqa: E402
+import reading_page  # noqa: E402
 
 from mmrag.agent.answer import source_pages
 from mmrag.auth import service  # noqa: E402
@@ -199,6 +200,9 @@ def sidebar(settings: Settings, user: service.User) -> None:
         if user.is_admin and st.button("📊 Admin metrics", width="stretch"):
             st.session_state["view"] = "admin"
             st.rerun()
+        if st.button("🪐 Birth chart reading", width="stretch"):
+            st.session_state["view"] = "reading"
+            st.rerun()
         if st.button("What I remember", width="stretch"):
             st.session_state["view"] = "memory"
             st.rerun()
@@ -328,6 +332,8 @@ def main() -> None:
         login.change_password_screen(settings, forced=False)
     elif view == "memory":
         memory_view(settings, user)
+    elif view == "reading":
+        reading_page.reading_view(settings, user)
     elif view == "admin" and user.is_admin:
         admin_view(settings)
     else:

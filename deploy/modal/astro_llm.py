@@ -24,7 +24,7 @@ GGUF = "astro-v2-8b.Q4_K_M.gguf"
 SHA256 = "4b1898f08f1ef9476ff4221f6eeee6162a2766c4b8dfa6bb70b7f75bfb1ccf5d"
 MODELS = "/models"
 PORT = 8080
-GPU = "L4"  # 24 GB: the 5 GB model plus a full 16k context fits with room to spare
+GPU = "L4"  # 24 GB: the 5 GB model plus a 32k-token KV cache (~4.5 GB) fits with room to spare
 
 app = modal.App("astro-llm")
 volume = modal.Volume.from_name("astro-llm-models", create_if_missing=True)
@@ -63,7 +63,7 @@ def download() -> None:
               secrets=[modal.Secret.from_name("astro-llm-key")],
               scaledown_window=300,  # stop the GPU 5 minutes after the last request
               timeout=3600, max_containers=1)
-@modal.concurrent(max_inputs=4)
+@modal.concurrent(max_inputs=2)
 @modal.web_server(PORT, startup_timeout=600)
 def serve() -> None:
     import os
@@ -74,7 +74,7 @@ def serve() -> None:
         "--alias", "astro-v2-8b",
         "--host", "0.0.0.0", "--port", str(PORT),
         "--n-gpu-layers", "999",
-        "--ctx-size", "16384", "--parallel", "4",  # 4 slots of 4k tokens each
+        "--ctx-size", "32768", "--parallel", "2",  # 2 slots of 16k: a reading prompt is ~6k tokens
         "--jinja", "--reasoning", "off",  # Qwen3 thinking off, as the model card asks
         "--api-key", os.environ["ASTRO_LLM_API_KEY"],
     ])

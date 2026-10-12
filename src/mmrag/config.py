@@ -175,9 +175,25 @@ class Eval(_Section):
     judge_embed_dims: int = Field(default=1536, gt=0)
 
 
+class Writer(_Section):
+    """The model that writes birth-chart readings (Phase 11): the fine-tuned astro-v2-8b behind any
+    OpenAI-compatible server (llama-server on Modal), at WRITER_BASE_URL with WRITER_API_KEY from .env.
+    It only writes: the chart is computed by code and the passages come from the library."""
+
+    model: str = "astro-v2-8b"            # the server's model alias
+    system_prompt_file: Path = Path("deploy/modal/system_v1.txt")  # the prompt it was trained with
+    max_tokens: int = Field(default=1800, gt=0)
+    temperature: float = Field(default=0.3, ge=0, le=2)
+    timeout_s: float = Field(default=900, gt=0)  # a cold start loads the model first
+    passages: int = Field(default=12, ge=0)  # library passages given to the writer (0: chart facts only)
+    passage_chars: int = Field(default=900, gt=0)
+
+
 class Secrets(_Section):
     openai_api_key: SecretStr | None
     database_url: SecretStr
+    writer_base_url: str | None = None   # e.g. https://<workspace>--astro-llm-serve.modal.run/v1
+    writer_api_key: SecretStr | None = None
 
 
 class Settings(_Section):
@@ -193,6 +209,7 @@ class Settings(_Section):
     search: Search
     agent: Agent
     memory: Memory = Memory()
+    writer: Writer = Writer()
     ui: UI
     auth: Auth
     observability: Observability
@@ -247,6 +264,8 @@ def load_settings(config_file: Path, environ: Mapping[str, str]) -> Settings:
     raw["secrets"] = {
         "openai_api_key": environ.get("OPENAI_API_KEY") or None,
         "database_url": database_url,
+        "writer_base_url": environ.get("WRITER_BASE_URL") or None,
+        "writer_api_key": environ.get("WRITER_API_KEY") or None,
     }
 
     try:

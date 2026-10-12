@@ -171,6 +171,34 @@ The Kaggle job runs this project's own `ingest index --no-db`, so it embeds exac
 would; `import` only adds vectors the local cache lacks and never replaces it. Uses `KAGGLE_API_TOKEN`
 and `caption.kaggle_username`, like captioning. `mmrag ingest index --no-db` also works locally.
 
+## Birth-chart readings by the fine-tuned model (Phase 11)
+
+The chart is computed by code: sidereal positions from NASA JPL's DE440s ephemeris (Skyfield), the
+Lahiri ayanamsa, whole-sign houses, nakshatras, dignities, combustion and Vimshottari dashas. The
+fine-tuned model [astro-v2-8b](https://huggingface.co/iamaigeek/astro-v2-8b-gguf) only *writes*. It
+gets the chart facts and numbered passages from the library, which it cites as [P3]. Code then
+drops citations to passages it was not given, and flags any planet position in the text that the
+chart contradicts. The chat agent stays on `agent.model`.
+
+The model runs on Modal ([deploy/modal/astro_llm.py](deploy/modal/astro_llm.py)). Point the app at it in `.env`:
+
+```
+WRITER_BASE_URL=https://<workspace>--astro-llm-serve.modal.run/v1
+WRITER_API_KEY=<the key in the Modal secret astro-llm-key>
+MMRAG_EPHEMERIS_DIR=<folder for the 32 MB ephemeris; default data/ephemeris>
+```
+
+```powershell
+$env:MMRAG_CONFIG = "config.astro.yaml"
+mmrag astro chart   --date 1990-05-17 --time 14:30 --tz Asia/Kolkata --lat 28.6139 --lon 77.2090
+mmrag astro reading --date 1990-05-17 --time 14:30 --tz Asia/Kolkata --lat 28.6139 --lon 77.2090 [--question "..."]
+mmrag astro reading ... --writer openai          # the same reading by agent.model, to compare
+mmrag astro ask "What does Saturn in the 7th house give?" [--no-books] [--writer openai]
+```
+
+In the chat app, **🪐 Birth chart reading** in the sidebar does the same. The first reading after a
+pause also starts the GPU, which takes a minute or two. The GPU stops 5 minutes after the last request.
+
 ## Tests
 
 Development is test-driven where it fits (constitution W5, LLD §10). Install the test tools with `pip install -r requirements-dev.txt`.

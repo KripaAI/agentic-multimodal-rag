@@ -31,3 +31,6 @@ fastembed>=0.8,<0.9
 # Phase 7: web UI and password hashing
 streamlit>=1.64,<2
 argon2-cffi>=25,<26
+
+# Phase 11: birth charts computed by code (JPL ephemeris; pure Python)
+skyfield>=1.49,<2
