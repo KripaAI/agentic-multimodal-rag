@@ -6,7 +6,7 @@ the Modal secret `astro-llm-key` (key ASTRO_LLM_API_KEY) as `Authorization: Bear
 
     python -m modal run deploy/modal/astro_llm.py::download   # once: fetch the model into the volume
     python -m modal deploy deploy/modal/astro_llm.py          # serve; prints the URL
-    python -m modal run deploy/modal/astro_llm.py::smoke --url <URL>
+    python deploy/modal/smoke.py --url <URL>                 # one question, from the laptop
 
 The model card asks for the training system prompt (system_v1.txt, also in the volume) and Qwen3
 thinking off; the server turns thinking off for every request
@@ -94,25 +94,3 @@ def serve() -> None:
         time.sleep(1)
     raise RuntimeError("llama-server did not become ready")
 
-
-@app.local_entrypoint()
-def smoke(url: str, question: str = "What does Jupiter in the 10th house indicate?") -> None:
-    """Ask one question through the deployed endpoint, with the training system prompt."""
-    import json
-    import os
-    import urllib.request
-    from pathlib import Path
-
-    from dotenv import load_dotenv
-
-    load_dotenv(Path(__file__).resolve().parents[2] / ".env")
-    system = (Path(__file__).with_name("system_v1.txt")).read_text(encoding="utf-8")
-    body = {"model": "astro-v2-8b", "temperature": 0.3, "max_tokens": 400,
-            "messages": [{"role": "system", "content": system}, {"role": "user", "content": question}]}
-    req = urllib.request.Request(url.rstrip("/") + "/v1/chat/completions", data=json.dumps(body).encode(),
-                                 headers={"Content-Type": "application/json",
-                                          "Authorization": f"Bearer {os.environ['ASTRO_LLM_API_KEY']}"})
-    with urllib.request.urlopen(req, timeout=900) as r:  # the first call waits for a cold start
-        reply = json.load(r)
-    print(reply["choices"][0]["message"]["content"])
-    print(json.dumps(reply.get("usage"), indent=1))
