@@ -196,6 +196,12 @@ mmrag astro reading ... --writer openai          # the same reading by agent.mod
 mmrag astro ask "What does Saturn in the 7th house give?" [--no-books] [--writer openai]
 ```
 
+**Judging the readings with Gemini.** `mmrag astro judge` writes the cases in
+[eval/astro_cases.yaml](eval/astro_cases.yaml) (every life stage, plus safety probes) and has Gemini review
+each reading against the computed chart facts and the passages the writer saw. It lists each error
+with a quote and scores six criteria from 1 to 5. It needs `GEMINI_API_KEY` in `.env`. Add
+`--writer both` to compare with `agent.model`. The report goes to `data/eval/astro/`.
+
 In the chat app, **🪐 Birth chart reading** in the sidebar does the same. The first reading after a
 pause also starts the GPU, which takes a minute or two. The GPU stops 5 minutes after the last request.
 

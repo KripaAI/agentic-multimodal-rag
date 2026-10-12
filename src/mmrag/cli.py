@@ -1052,6 +1052,41 @@ def _print_reading(reading, show_facts: bool) -> None:
           f"{reading.output_tokens} out · {len(reading.passages)} passages given, {len(reading.cited)} cited]")
 
 
+def _astro_judge(settings: Settings, args: argparse.Namespace) -> int:
+    """Write the test cases with the chosen writer(s) and have Gemini review every reading."""
+    import datetime
+
+    from mmrag.astro import judge as J
+
+    try:
+        judge = J.gemini_judge(args.judge_model)
+    except RuntimeError as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
+    writers = ["astro", "openai"] if args.writer == "both" else [args.writer]
+    cases = J.load_cases(Path(args.cases))
+
+    def show(r) -> None:
+        if r.error:
+            print(f"{r.case_id:24} {r.writer:7} FAILED {r.error[:120]}")
+        else:
+            j = r.judgement
+            majors = sum(e["severity"] == "major" for e in j["errors"])
+            print(f"{r.case_id:24} {r.writer:7} overall {j['overall']}/5  errors {len(j['errors'])} "
+                  f"({majors} major)  checker notes {len(r.checker_notes)}  {r.seconds} s")
+
+    report = J.run(settings, cases, writers, judge, args.judge_model, only=args.only, use_books=not args.no_books,
+                   on_result=show)
+    out = settings.resolve(settings.paths.data_dir) / "eval" / "astro" / datetime.datetime.now().strftime("%Y%m%d-%H%M")
+    path = J.write_report(report, out)
+    for w, s in J.summary(report).items():
+        print(f"{w}: overall {s['overall']}, chart {s['chart_accuracy']}, astrology {s['astrology_correctness']}, "
+              f"passages {s['passage_use']}, age {s['age_appropriateness']}, safety {s['safety']}, "
+              f"helpful {s['helpfulness']}, major errors per reading {s['major_errors']}")
+    print(f"Report: {path}")
+    return 0
+
+
 def cmd_astro(settings: Settings, args: argparse.Namespace) -> int:
     """Birth charts computed by code; readings and answers written by the fine-tuned model."""
     from datetime import date
@@ -1060,6 +1095,8 @@ def cmd_astro(settings: Settings, args: argparse.Namespace) -> int:
     from mmrag.astro.reading import WriterNotConfigured, answer_question, write_reading
 
     on = date.fromisoformat(args.on) if getattr(args, "on", None) else None
+    if args.astro_command == "judge":
+        return _astro_judge(settings, args)
     try:
         if args.astro_command == "ask":
             reading = answer_question(settings, args.question, writer=args.writer, use_books=not args.no_books)
@@ -1274,6 +1311,12 @@ def main(argv: list[str] | None = None) -> int:
                        help="astro: the fine-tuned model (WRITER_BASE_URL); openai: agent.model, to compare")
         p.add_argument("--no-books", action="store_true", help="no library passages: the model alone")
     a_read.add_argument("--out", help="also save the reading as a Markdown file")
+    a_judge = astro_sub.add_parser("judge", help="write the test cases and have Gemini judge each reading")
+    a_judge.add_argument("--writer", choices=["astro", "openai", "both"], default="astro")
+    a_judge.add_argument("--judge-model", default="gemini-2.5-pro", help="a Gemini model (GEMINI_API_KEY in .env)")
+    a_judge.add_argument("--cases", default=str(PROJECT_ROOT / "eval" / "astro_cases.yaml"))
+    a_judge.add_argument("--only", nargs="*", help="case ids to run (default: all)")
+    a_judge.add_argument("--no-books", action="store_true", help="no library passages: the model alone")
     args = parser.parse_args(argv)
 
     try:

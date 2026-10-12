@@ -1,0 +1,88 @@
+"""Phase 11: Gemini judges readings (with a fake judge and fake writers here)."""
+
+from __future__ import annotations
+
+import json
+
+import pytest
+
+from mmrag.astro import judge as J
+from mmrag.astro import natal
+from mmrag.astro.reading import Passage, Reading
+from mmrag.config import PROJECT_ROOT, load_settings
+
+needs_ephemeris = pytest.mark.skipif(not (natal._ephemeris_dir() / "de440s.bsp").is_file(),
+                                     reason="JPL ephemeris not downloaded")
+
+
+@pytest.fixture
+def settings():
+    return load_settings(PROJECT_ROOT / "config.yaml", {"DATABASE_URL": "postgresql://u:p@localhost:5432/mmrag"})
+
+
+GOOD = {"errors": [{"quote": "Virgo is ruled by Mars", "problem": "Mercury rules Virgo", "severity": "major"}],
+        "scores": {c: 4 for c in J.CRITERIA}, "overall": 4, "verdict": "Solid."}
+
+
+def test_the_judges_json_is_read_even_inside_a_code_fence():
+    text = "```json\n" + json.dumps(GOOD) + "\n```"
+    j = J.Judgement.model_validate_json(J._json_in(text))
+    assert j.overall == 4 and j.errors[0].severity == "major"
+
+
+def test_the_cases_file_loads():
+    cases = J.load_cases(PROJECT_ROOT / "eval" / "astro_cases.yaml")
+    ids = [c["id"] for c in cases["readings"]]
+    assert "child-delhi" in ids and "safety-death" in ids and len(cases["questions"]) >= 4
+
+
+def test_missing_key_is_a_clear_error(monkeypatch):
+    monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_API_KEY", raising=False)
+    with pytest.raises(RuntimeError, match="GEMINI_API_KEY"):
+        J.gemini_judge()
+
+
+@needs_ephemeris
+def test_run_writes_judges_and_reports(settings, tmp_path):
+    cases = {"readings": [{"id": "child", "date": "2020-04-20", "time": "16:46", "tz": "Asia/Kolkata", "lat": 28.61,
+                           "lon": 77.21, "question": "future", "on": "2026-10-12"}],
+             "questions": [{"id": "q1", "question": "What is Gajakesari yoga?"}]}
+    seen = []
+
+    def reading_fn(s, chart, question=None, writer="astro", use_books=True, on=None):
+        p = [Passage(1, "c1", "book.pdf", [3], "text", "q")]
+        return Reading(text="A reading [1].", model=f"{writer}-model", passages=p, cited=p, notices=["a note"],
+                       chart=chart, facts="FACTS")
+
+    def answer_fn(s, question, writer="astro", use_books=True):
+        return Reading(text="An answer.", model=f"{writer}-model", passages=[], cited=[], notices=[])
+
+    def judge(user: str) -> J.Judgement:
+        seen.append(user)
+        return J.Judgement.model_validate(GOOD)
+
+    report = J.run(settings, cases, ["astro", "openai"], judge, "fake-judge", reading_fn=reading_fn,
+                   answer_fn=answer_fn)
+    assert len(report.results) == 4 and all(r.judgement for r in report.results)
+    assert "CHART FACTS:\nFACTS" in seen[0] and "[P1] (book.pdf, page 3) text" in seen[0]
+    assert "REQUEST:\nfuture" in seen[0] and "READING:\nA reading [1]." in seen[0]
+    assert "(none: a general question)" in seen[2]
+    s = J.summary(report)
+    assert s["astro"]["overall"] == 4 and s["astro"]["major_errors"] == 1 and s["openai"]["cases"] == 2
+    path = J.write_report(report, tmp_path)
+    md = path.read_text(encoding="utf-8")
+    assert "| astro | 2 | 4.0 |" in md and "Virgo is ruled by Mars" in md
+    assert json.loads((tmp_path / "results.json").read_text(encoding="utf-8"))["judge_model"] == "fake-judge"
+
+
+def test_a_failing_case_does_not_stop_the_run(settings):
+    cases = {"questions": [{"id": "q1", "question": "x"}, {"id": "q2", "question": "y"}]}
+
+    def answer_fn(s, question, writer="astro", use_books=True):
+        if question == "x":
+            raise TimeoutError("server asleep")
+        return Reading(text="ok", model="m", passages=[], cited=[], notices=[])
+
+    report = J.run(settings, cases, ["astro"], lambda u: J.Judgement.model_validate(GOOD), "j", answer_fn=answer_fn)
+    assert report.results[0].error.startswith("TimeoutError") and report.results[1].judgement
