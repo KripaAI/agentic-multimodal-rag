@@ -1058,26 +1058,35 @@ def _astro_judge(settings: Settings, args: argparse.Namespace) -> int:
 
     from mmrag.astro import judge as J
 
-    try:
-        judge = J.gemini_judge(args.judge_model)
-    except RuntimeError as e:
-        print(f"Error: {e}", file=sys.stderr)
-        return 2
+    judge = None
+    if not args.no_judge:
+        try:
+            judge = J.gemini_judge(args.judge_model)
+        except RuntimeError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 2
     writers = ["astro", "openai"] if args.writer == "both" else [args.writer]
     cases = J.load_cases(Path(args.cases))
 
     def show(r) -> None:
         if r.error:
             print(f"{r.case_id:24} {r.writer:7} FAILED {r.error[:120]}")
+        elif not r.judgement:
+            print(f"{r.case_id:24} {r.writer:7} written ({r.seconds} s, checker notes {len(r.checker_notes)})")
         else:
             j = r.judgement
             majors = sum(e["severity"] == "major" for e in j["errors"])
             print(f"{r.case_id:24} {r.writer:7} overall {j['overall']}/5  errors {len(j['errors'])} "
                   f"({majors} major)  checker notes {len(r.checker_notes)}  {r.seconds} s")
 
-    report = J.run(settings, cases, writers, judge, args.judge_model, only=args.only, use_books=not args.no_books,
-                   on_result=show)
-    out = settings.resolve(settings.paths.data_dir) / "eval" / "astro" / datetime.datetime.now().strftime("%Y%m%d-%H%M")
+    if args.rejudge:
+        out = Path(args.rejudge)
+        report = J.rejudge(J.load_report(out / "results.json"), judge, args.judge_model, on_result=show)
+    else:
+        report = J.run(settings, cases, writers, judge, args.judge_model, only=args.only,
+                       use_books=not args.no_books, on_result=show)
+        out = settings.resolve(settings.paths.data_dir) / "eval" / "astro" / (
+            datetime.datetime.now().strftime("%Y%m%d-%H%M") + (f"-{args.label}" if args.label else ""))
     path = J.write_report(report, out)
     for w, s in J.summary(report).items():
         print(f"{w}: overall {s['overall']}, chart {s['chart_accuracy']}, astrology {s['astrology_correctness']}, "
@@ -1317,6 +1326,9 @@ def main(argv: list[str] | None = None) -> int:
     a_judge.add_argument("--cases", default=str(PROJECT_ROOT / "eval" / "astro_cases.yaml"))
     a_judge.add_argument("--only", nargs="*", help="case ids to run (default: all)")
     a_judge.add_argument("--no-books", action="store_true", help="no library passages: the model alone")
+    a_judge.add_argument("--no-judge", action="store_true", help="write the readings only; judge later with --rejudge")
+    a_judge.add_argument("--rejudge", help="a report folder: judge its readings that have no judgement yet")
+    a_judge.add_argument("--label", help="appended to the report folder name, e.g. level1")
     args = parser.parse_args(argv)
 
     try:

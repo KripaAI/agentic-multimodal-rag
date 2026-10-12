@@ -76,13 +76,13 @@ def asks_about_own_chart(question: str) -> bool:
 # ---------------------------------------------------------------- writers
 
 def _openai_like_call(client, model: str, messages: list[dict], max_tokens: int, temperature: float,
-                      reasoning: bool) -> Written:
+                      reasoning: bool, extra_body: dict | None = None) -> Written:
     if reasoning:  # gpt-5.x: no temperature; a little reasoning keeps the comparison fair on speed
         r = client.chat.completions.create(model=model, messages=messages, max_completion_tokens=max_tokens * 3,
                                            reasoning_effort="low")
     else:
         r = client.chat.completions.create(model=model, messages=messages, max_tokens=max_tokens,
-                                           temperature=temperature)
+                                           temperature=temperature, **({"extra_body": extra_body} if extra_body else {}))
     text = (r.choices[0].message.content or "").strip()
     text = re.sub(r"^<think>.*?</think>\s*", "", text, flags=re.S)  # in case the server leaves thinking on
     usage = getattr(r, "usage", None)
@@ -103,7 +103,8 @@ def get_writer(settings: Settings, which: WriterName = "astro") -> Callable[[lis
         client = OpenAI(base_url=settings.secrets.writer_base_url.rstrip("/"),
                         api_key=settings.secrets.writer_api_key.get_secret_value(), timeout=w.timeout_s,
                         max_retries=1)
-        return lambda messages: _openai_like_call(client, w.model, messages, w.max_tokens, w.temperature, False)
+        return lambda messages: _openai_like_call(client, w.model, messages, w.max_tokens, w.temperature, False,
+                                                  {"repeat_penalty": w.repeat_penalty})
     from mmrag.llm import REASONING_PREFIXES, get_client
 
     model = settings.agent.model
@@ -208,8 +209,19 @@ def reading_messages(settings: Settings, facts: str, passages: list[Passage], re
             {"role": "user", "content": "\n".join(x for x in parts if x is not None).strip()}]
 
 
+QUESTION_RULES = ("Rules for this answer:\n"
+                  "1. The reference facts are correct: use them and never contradict them.\n"
+                  "2. A passage that discusses a particular person's horoscope is an example, not a definition; "
+                  "never present it as the rule.\n"
+                  "3. State only what the reference facts or the passages support; if they do not cover something, "
+                  "say so briefly instead of guessing.")
+
+
 def question_messages(settings: Settings, question: str, passages: list[Passage]) -> list[dict]:
-    content = question if not passages else f"{_passages_block(passages)}\n\nQuestion: {question}"
+    from mmrag.astro.compose import reference_facts
+
+    parts = [x for x in (reference_facts(question), _passages_block(passages)) if x]
+    content = "\n\n".join(parts + [f"Question: {question}", QUESTION_RULES]) if parts else question
     return [{"role": "system", "content": system_prompt(settings)}, {"role": "user", "content": content}]
 
 
@@ -329,7 +341,10 @@ def check_positions(text: str, chart: NatalChart) -> list[str]:
             problems.append(f"says {sign} Lagna; the chart's Lagna is {chart.lagna.sign}")
     for m in _DIGNITY_RE.finditer(text):
         claim = "own sign" if m.group(2).startswith("in") else m.group(2)
-        for body in _bodies(m.group("bodies")):
+        named = _bodies(m.group("bodies"))
+        if re.search(r"\b(?:its|his|her)\s+own", m.group(2)):  # singular: only the last planet named
+            named = named[-1:]
+        for body in named:
             actual = getattr(pl[body], "dignity", None)
             if body not in ("Rahu", "Ketu") and actual != claim:
                 problems.append(f"calls {body} {claim}; in the chart it is {actual or 'neither exalted, debilitated nor in its own sign'}")
@@ -461,7 +476,7 @@ HOUSE_TOPICS = {"self": {1}, "wealth": {2, 11}, "family": {2, 4}, "speech": {2},
                 "partnership": {7}, "longevity": {8}, "father": {9, 10}, "fortune": {9}, "dharma": {9},
                 "career": {10}, "profession": {10}, "gains": {11}, "income": {11}, "losses": {12}, "expenses": {12}}
 _BODY_IS_LORD_RE = re.compile(rf"(?P<a>{_B})\s*(?:,|\()\s*(?:[Tt]he\s+)?{_ORD}(?:\s+(?:and|&)\s+{_ORD})?\s+lord\b")
-_VARGOTTAMA_RE = re.compile(rf"(?P<a>{_B})(?:\s+is|\s*,|\s+being)?(?:\s+also)?\s+vargottama", re.I)
+_VARGOTTAMA_RE = re.compile(rf"(?P<a>{_B})(?:\s+is|\s+being)(?:\s+also)?\s+vargottama|vargottama\s+(?P<b>{_B})", re.I)
 _CHILD_TOPICS = re.compile(r"\b(poverty|penury|daridra|wealth|riches|career|profession|marriage|spouse|wife|"
                            r"husband|divorce|death|longevity)\b", re.I)
 _NEGATED = re.compile(r"(?:\bno\b|\bnot\b|\bnor\b|\bwithout\b|\babsence\b|\bisn't\b|\bdoes not\b)[^.]{0,40}$", re.I)
@@ -591,7 +606,7 @@ def check_analysis(text: str, chart: NatalChart, stage=None) -> list[str]:
                 problems.append(f"calls {a} the {ordinal(n)} lord; it rules the "
                                 f"{' and '.join(ordinal(x) for x in rules) or 'no house'}")
     for m in _VARGOTTAMA_RE.finditer(text):
-        a = m.group("a")
+        a = m.group("a") or m.group("b")
         if navamsa(chart.placements[a].longitude) != chart.placements[a].sign:
             problems.append(f"calls {a} Vargottama; it is not (Navamsa "
                             f"{navamsa(chart.placements[a].longitude)})")
@@ -630,19 +645,50 @@ def write_reading(settings: Settings, chart: NatalChart, question: str | None = 
     queries = ([question] if question else []) + chart_queries(chart, on)
     passages = gather_passages(settings, queries, settings.writer.passages if use_books else 0, embed_query,
                                search_fn, exclude=_CHILD_EXCLUDE if stage.stage == "child" else None)
-    request = (f"{question.strip()} Answer from this chart." if question else
-               "Give a full reading of this chart.") + "\n\n" + reading_rules(stage, bool(passages), chart)
-    written = (write or get_writer(settings, writer))(reading_messages(settings, facts, passages, request))
-    text, cited, notices = resolve_citations(written.text, passages)
-    notices += check_positions(text, chart)
-    notices += check_analysis(text, chart, stage)
+    from mmrag.astro.compose import collapse_repetition, factual_sections, strip_factual_sections
+
+    shown = factual_sections(chart, on)
+    sections = "Answer, Classical view, Dasha timing, Summary, Optional remedies" if question else \
+        "Classical view, Dasha timing, Summary, Optional remedies"
+    request = (f"{question.strip()} Answer from this chart." if question else "Give a full reading of this chart.") \
+        + ("\n\nThe reader already sees this 'Chart overview' and 'Key factors', written by the software:\n\n"
+           f"{shown}\n\nDo not write those two sections again and do not restate positions, dignities or yogas. "
+           f"Write only these sections: {sections}. Interpret the factors above; when you mention a planet, use "
+           "only what the facts say about it.") \
+        + "\n\n" + reading_rules(stage, bool(passages), chart)
+    write_fn = write or get_writer(settings, writer)
+    messages = reading_messages(settings, facts, passages, request)
+
+    def process(raw: str) -> tuple[str, list, list[str], list[str]]:
+        body, looped = collapse_repetition(strip_factual_sections(raw))
+        body, cited, notes = resolve_citations(body, passages)
+        problems = check_positions(body, chart) + check_analysis(body, chart, stage)
+        if looped:
+            notes.append("A repeated passage in the writer's output was cut.")
+        return body, cited, notes, problems
+
+    written = write_fn(messages)
+    tokens_in, tokens_out = written.input_tokens, written.output_tokens
+    body, cited, notes, problems = process(written.text)
+    if problems and settings.writer.repair:
+        fix = ("Some sentences in your answer contradict the chart facts or standard astrology:\n"
+               + "\n".join(f"- {p}" for p in problems)
+               + "\n\nRewrite your answer with the same sections, correcting or removing only those sentences. Keep "
+                 "everything else, including the [P] citations. Do not add new claims.")
+        second = write_fn(messages + [{"role": "assistant", "content": written.text}, {"role": "user", "content": fix}])
+        tokens_in, tokens_out = tokens_in + second.input_tokens, tokens_out + second.output_tokens
+        b2, c2, n2, p2 = process(second.text)
+        if b2 and len(p2) < len(problems):
+            notes2 = n2 + [f"The writer corrected {len(problems) - len(p2)} flagged sentence(s) in a second pass."]
+            body, cited, notes, problems = b2, c2, notes2, p2
+    notices = notes + problems
     if passages and not cited:
         notices.append("The reading cites none of the library passages it was given.")
-    if not text:
+    if not body:
         notices.append("The writer returned no text.")
-    return Reading(text=text, model=written.model, passages=passages, cited=cited, notices=notices, chart=chart,
-                   facts=facts, seconds=time.monotonic() - started, input_tokens=written.input_tokens,
-                   output_tokens=written.output_tokens)
+    return Reading(text=shown + "\n\n" + body, model=written.model, passages=passages, cited=cited, notices=notices,
+                   chart=chart, facts=facts, seconds=time.monotonic() - started, input_tokens=tokens_in,
+                   output_tokens=tokens_out)
 
 
 def answer_question(settings: Settings, question: str, writer: WriterName = "astro", use_books: bool = True,

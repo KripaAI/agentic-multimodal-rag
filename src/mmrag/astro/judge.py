@@ -144,6 +144,7 @@ class CaseResult:
     error: str | None = None
     request: str = ""
     facts: str = ""
+    passage_list: list[dict] = field(default_factory=list)  # what the writer saw, for judging later
 
 
 @dataclass
@@ -157,7 +158,22 @@ def load_cases(path: Path) -> dict:
     return yaml.safe_load(path.read_text(encoding="utf-8")) or {}
 
 
-def run(settings: Settings, cases: dict, writers: list[str], judge: Callable[[str], Judgement],
+def _passages_of(res: CaseResult) -> list:
+    from mmrag.astro.reading import Passage
+
+    return [Passage(**d) for d in res.passage_list]
+
+
+def judge_result(res: CaseResult, judge: Callable[[str], Judgement]) -> None:
+    """Judge one written case in place; a judge failure keeps the reading for a later --rejudge."""
+    try:
+        res.judgement = judge(judge_input(res.facts, _passages_of(res), res.request, res.reading)).model_dump()
+        res.error = None
+    except Exception as e:  # noqa: BLE001 - e.g. the free tier's daily limit
+        res.error = f"judge: {type(e).__name__}: {e}"
+
+
+def run(settings: Settings, cases: dict, writers: list[str], judge: Callable[[str], Judgement] | None,
         judge_model: str, only: list[str] | None = None, use_books: bool = True,
         reading_fn: Callable | None = None, answer_fn: Callable | None = None,
         on_result: Callable[[CaseResult], None] | None = None) -> Report:
@@ -187,14 +203,33 @@ def run(settings: Settings, cases: dict, writers: list[str], judge: Callable[[st
                     res = CaseResult(case_id=c["id"], kind=kind, writer=writer, model=r.model,
                                      seconds=round(time.monotonic() - t, 1), reading=r.text,
                                      checker_notes=list(r.notices), cited=len(r.cited), passages=len(r.passages),
-                                     request=request, facts=r.facts)
-                    res.judgement = judge(judge_input(r.facts, r.passages, request, r.text)).model_dump()
+                                     request=request, facts=r.facts, passage_list=[asdict(x) for x in r.passages])
                 except Exception as e:  # noqa: BLE001 - one failed case must not stop the run
                     res = CaseResult(case_id=c["id"], kind=kind, writer=writer, model="", seconds=0, reading="",
                                      checker_notes=[], cited=0, passages=0, error=f"{type(e).__name__}: {e}")
+                if judge is not None and not res.error:
+                    judge_result(res, judge)
                 report.results.append(res)
                 if on_result:
                     on_result(res)
+    return report
+
+
+def load_report(results_json: Path) -> Report:
+    data = json.loads(results_json.read_text(encoding="utf-8"))
+    return Report(started=data["started"], judge_model=data["judge_model"],
+                  results=[CaseResult(**r) for r in data["results"]])
+
+
+def rejudge(report: Report, judge: Callable[[str], Judgement], judge_model: str,
+            on_result: Callable[[CaseResult], None] | None = None) -> Report:
+    """Judge every written case that has no judgement yet (the writers are not called again)."""
+    report.judge_model = judge_model
+    for res in report.results:
+        if res.reading and res.judgement is None:
+            judge_result(res, judge)
+            if on_result:
+                on_result(res)
     return report
 
 
@@ -229,8 +264,10 @@ def write_report(report: Report, out_dir: Path) -> Path:
     lines += ["", "## Cases", ""]
     for r in report.results:
         lines.append(f"### {r.case_id} - {r.writer}" + (f" ({r.model}, {r.seconds} s)" if r.model else ""))
-        if r.error:
-            lines += ["", f"**Failed:** {r.error}", ""]
+        if r.error or not r.judgement:
+            lines += ["", f"**Not judged:** {r.error or 'written only (--no-judge)'}", ""]
+            if r.reading:
+                lines += ["<details><summary>Reading</summary>", "", r.reading, "", "</details>", ""]
             continue
         j = r.judgement
         sc = ", ".join(f"{c} {j['scores'][c]}" for c in CRITERIA)

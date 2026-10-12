@@ -162,23 +162,49 @@ def test_a_single_question_gets_more_than_three_passages(settings):
 
 
 @needs_ephemeris
-def test_a_reading_gives_the_writer_facts_and_passages_then_checks_it(settings):
+def test_a_reading_gives_the_writer_facts_and_passages_then_checks_and_repairs_it(settings):
     chart = natal.compute_chart(parse_birth("1869-10-02", "07:12", "+04:38", 21.6417, 69.6293))
-    seen = {}
+    calls = []
+    replies = ["**Chart overview**\nThe model's own overview.\n\n**Classical view**\nLibra Lagna [P1]. Saturn in the "
+               "7th house [P2][P40].",
+               "**Classical view**\nLibra Lagna [P1]. Saturn in the 2nd house [P2]."]
 
     def write(messages):
-        seen["messages"] = messages
-        return Written(text="Libra Lagna [P1]. Saturn in the 7th house [P2][P40].", model="fake",
-                       input_tokens=10, output_tokens=5)
+        calls.append(messages)
+        return Written(text=replies[len(calls) - 1], model="fake", input_tokens=10, output_tokens=5)
 
     search = lambda s, q, c, k, embed_query=None: [_Hit(f"{q}-{i}", f"about {q}") for i in range(k)]  # noqa: E731
     r = write_reading(settings, chart, write=write, search_fn=search, on=date(1900, 1, 1))
-    system, user = seen["messages"][0]["content"], seen["messages"][1]["content"]
+    system, user = calls[0][0]["content"], calls[0][1]["content"]
     assert "Jyotishi" in system  # the training prompt
     assert "Lagna (Ascendant): Libra" in user and "[P1]" in user and "never recalculate" in user
-    assert r.text == "Libra Lagna [1]. Saturn in the 7th house [2]."
-    assert len(r.passages) == settings.writer.passages and [p.n for p in r.cited] == [1, 2]
-    assert any("P40" in n for n in r.notices) and any("Saturn in the 7th house" in n for n in r.notices)
+    assert "Do not write those two sections again" in user and "**Key factors**" in user
+    # the repair turn saw the first answer and the flagged sentence
+    assert len(calls) == 2 and calls[1][-2]["role"] == "assistant" and "Saturn in the 7th house" in calls[1][-1]["content"]
+    assert r.text.startswith("**Chart overview** _(calculated by software)_")
+    assert "The model's own overview" not in r.text            # the model's factual sections are dropped
+    assert r.text.endswith("**Classical view**\nLibra Lagna [1]. Saturn in the 2nd house [2].")
+    assert [p.n for p in r.cited] == [1, 2] and r.input_tokens == 20
+    assert any("corrected 1 flagged sentence" in n for n in r.notices)
+    assert not any("Saturn in the 7th house" in n for n in r.notices)
+
+
+@needs_ephemeris
+def test_the_repair_is_kept_only_when_it_has_fewer_problems(settings):
+    chart = natal.compute_chart(parse_birth("1869-10-02", "07:12", "+04:38", 21.6417, 69.6293))
+    calls = []
+
+    def write(messages):
+        calls.append(messages)
+        return Written(text="Saturn in the 7th house." if len(calls) == 1 else "Saturn in the 9th house. Mars in Leo.",
+                       model="fake")
+
+    r = write_reading(settings, chart, write=write, search_fn=lambda *a, **k: [], on=date(1900, 1, 1))
+    assert len(calls) == 2 and r.text.endswith("Saturn in the 7th house.")
+    settings.writer.repair = False
+    calls.clear()
+    write_reading(settings, chart, write=write, search_fn=lambda *a, **k: [], on=date(1900, 1, 1))
+    assert len(calls) == 1
 
 
 def test_writer_settings_come_from_the_environment(settings):

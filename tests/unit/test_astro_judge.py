@@ -86,3 +86,48 @@ def test_a_failing_case_does_not_stop_the_run(settings):
 
     report = J.run(settings, cases, ["astro"], lambda u: J.Judgement.model_validate(GOOD), "j", answer_fn=answer_fn)
     assert report.results[0].error.startswith("TimeoutError") and report.results[1].judgement
+
+
+def test_a_judge_failure_keeps_the_reading_and_rejudge_finishes_it(settings, tmp_path):
+    cases = {"questions": [{"id": "q1", "question": "x"}]}
+    p = [Passage(1, "c1", "book.pdf", [3], "text", "q")]
+
+    def answer_fn(s, question, writer="astro", use_books=True):
+        return Reading(text="An answer [1].", model="m", passages=p, cited=p, notices=[])
+
+    def quota(user):
+        raise RuntimeError("429 quota")
+
+    report = J.run(settings, cases, ["astro"], quota, "j", answer_fn=answer_fn)
+    r = report.results[0]
+    assert r.reading == "An answer [1]." and r.judgement is None and r.error.startswith("judge: RuntimeError")
+    J.write_report(report, tmp_path)
+    assert "Not judged" in (tmp_path / "report.md").read_text(encoding="utf-8")
+    seen = []
+    again = J.rejudge(J.load_report(tmp_path / "results.json"), lambda u: seen.append(u) or J.Judgement.model_validate(GOOD),
+                      "j2")
+    assert again.results[0].judgement["overall"] == 4 and again.results[0].error is None
+    assert "[P1] (book.pdf, page 3) text" in seen[0] and again.judge_model == "j2"
+    written_only = J.run(settings, cases, ["astro"], None, "j", answer_fn=answer_fn)
+    assert written_only.results[0].judgement is None and written_only.results[0].error is None
+
+
+@needs_ephemeris
+def test_code_written_sections_and_reference_facts():
+    from datetime import date
+
+    from mmrag.astro.compose import collapse_repetition, factual_sections, reference_facts, strip_factual_sections
+    from mmrag.astro.natal import parse_birth
+
+    child = natal.compute_chart(parse_birth("2020-04-20", "16:46", "Asia/Kolkata", 28.61, 77.21))
+    text = factual_sections(child, date(2026, 10, 12))
+    assert "Virgo Lagna" in text and "the 5th (Capricorn): Mars, Jupiter and Saturn" in text
+    assert "Challenge: Mercury is debilitated in Pisces and the debility is not cancelled" in text
+    assert "Challenge: Mars is debilitated in the Navamsa (Cancer)" in text and "longevity" not in text
+    assert "Ashlesha, Jyeshtha and Revati" in reference_facts("Which nakshatras are ruled by Mercury?")
+    assert "Jupiter in a kendra" in reference_facts("What is Gajakesari yoga?")
+    assert "Hasta nakshatra is ruled by Moon" in reference_facts("Tell me about Hasta")
+    assert reference_facts("hello") == ""
+    looped, cut = collapse_repetition("a line of text\n" + "- the Moon is not in the 5th\n" * 5)
+    assert cut and looped.count("the Moon is not") == 2
+    assert strip_factual_sections("**Relevant factors**\n- x\n\n**Summary**\nok") == "**Summary**\nok"

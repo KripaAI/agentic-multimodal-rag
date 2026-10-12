@@ -208,3 +208,15 @@ def test_the_fourth_child_reading(child):
     assert "Saturn's debility" not in notes and "Jupiter's debility" not in notes
     assert "calls Moon the 2nd lord" in notes and "7th house is aspected by Moon" in notes
     assert "Venus the 9th lord" not in notes
+
+
+@needs_ephemeris
+def test_no_false_alarms_on_lists_of_planets(child):
+    """From the first Level 1 reading (2026-10-12): two false alarms that would trigger needless repairs."""
+    stage = analysis.life_stage(child.birth.when_local.date(), ON)
+    text = ("It holds three planets: exalted Mars, Vargottama Jupiter and Saturn in its own sign. "
+            "Mercury and Saturn in its own sign.")
+    assert check_positions(text, child) == [] and check_analysis(text, child, stage) == []
+    wrong = "Mercury is in its own sign. Mars is Vargottama."
+    notes = " ".join(check_positions(wrong, child) + check_analysis(wrong, child, stage))
+    assert "Mercury own sign" in notes and "Mars Vargottama" in notes
