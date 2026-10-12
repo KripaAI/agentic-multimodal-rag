@@ -9,7 +9,8 @@ the Modal secret `astro-llm-key` (key ASTRO_LLM_API_KEY) as `Authorization: Bear
     python -m modal run deploy/modal/astro_llm.py::smoke --url <URL>
 
 The model card asks for the training system prompt (system_v1.txt, also in the volume) and Qwen3
-thinking off; the server turns thinking off for every request.
+thinking off; the server turns thinking off for every request
+(--reasoning off).
 """
 
 from __future__ import annotations
@@ -74,9 +75,24 @@ def serve() -> None:
         "--host", "0.0.0.0", "--port", str(PORT),
         "--n-gpu-layers", "999",
         "--ctx-size", "16384", "--parallel", "4",  # 4 slots of 4k tokens each
-        "--jinja", "--chat-template-kwargs", '{"enable_thinking": false}',
+        "--jinja", "--reasoning", "off",  # Qwen3 thinking off, as the model card asks
         "--api-key", os.environ["ASTRO_LLM_API_KEY"],
     ])
+    # llama-server opens its port before the model is loaded and answers 503 until then; Modal
+    # sends requests as soon as the port opens. Return only once /health says the model is ready.
+    import time
+    import urllib.request
+
+    deadline = time.monotonic() + 540
+    while time.monotonic() < deadline:
+        try:
+            with urllib.request.urlopen(f"http://127.0.0.1:{PORT}/health", timeout=5) as r:
+                if r.status == 200:
+                    return
+        except Exception:  # noqa: BLE001 - not listening yet, or 503 while loading
+            pass
+        time.sleep(1)
+    raise RuntimeError("llama-server did not become ready")
 
 
 @app.local_entrypoint()
