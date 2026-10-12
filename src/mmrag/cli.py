@@ -1313,7 +1313,7 @@ def main(argv: list[str] | None = None) -> int:
     a_read.add_argument("--out", help="also save the reading as a Markdown file")
     a_judge = astro_sub.add_parser("judge", help="write the test cases and have Gemini judge each reading")
     a_judge.add_argument("--writer", choices=["astro", "openai", "both"], default="astro")
-    a_judge.add_argument("--judge-model", default="gemini-2.5-pro", help="a Gemini model (GEMINI_API_KEY in .env)")
+    a_judge.add_argument("--judge-model", default="gemini-flash-latest", help="a Gemini model (GEMINI_API_KEY in .env)")
     a_judge.add_argument("--cases", default=str(PROJECT_ROOT / "eval" / "astro_cases.yaml"))
     a_judge.add_argument("--only", nargs="*", help="case ids to run (default: all)")
     a_judge.add_argument("--no-books", action="store_true", help="no library passages: the model alone")

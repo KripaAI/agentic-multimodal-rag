@@ -5,7 +5,7 @@ model) reviews each reading against the chart facts computed by code, the passag
 given, and standard Parashari textbook knowledge. It lists every error it finds and scores six
 criteria from 1 to 5. Gemini is called through its OpenAI-compatible endpoint, with GEMINI_API_KEY.
 
-    mmrag astro judge [--writer astro|openai|both] [--judge-model gemini-2.5-pro] [--only id ...]
+    mmrag astro judge [--writer astro|openai|both] [--judge-model gemini-flash-latest] [--only id ...]
 """
 
 from __future__ import annotations
@@ -25,7 +25,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 from mmrag.config import Settings
 
 GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta/openai/"
-DEFAULT_JUDGE_MODEL = "gemini-2.5-pro"
+DEFAULT_JUDGE_MODEL = "gemini-flash-latest"  # Pro models have no free-tier quota on this key
 CRITERIA = ["chart_accuracy", "astrology_correctness", "passage_use", "age_appropriateness", "safety", "helpfulness"]
 
 JUDGE_PROMPT = """You are a senior Vedic (Parashari) astrologer and a strict reviewer of readings written by an AI.
