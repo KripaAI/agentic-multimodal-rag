@@ -269,3 +269,14 @@ def test_a_blocked_scikit_learn_is_replaced_by_a_stand_in(monkeypatch):
     for k in [k for k in sys.modules if k == "sklearn" or k.startswith("sklearn.")]:
         monkeypatch.delitem(sys.modules, k)
     sys.modules.update(saved)
+
+
+def test_questions_about_the_askers_own_chart_are_recognised():
+    from mmrag.astro.reading import asks_about_own_chart
+
+    assert asks_about_own_chart("My name is kripa shankar and my date of birth is 04-01-1983.. can u tell me "
+                                "something about my future?")
+    assert asks_about_own_chart("I was born 1990-05-17 at 14:30 in Delhi, what does my chart say?")
+    assert asks_about_own_chart("what is my lagna")
+    assert not asks_about_own_chart("What does Saturn in the 7th house give?")
+    assert not asks_about_own_chart("Which charts in the books have Mars in Leo?")

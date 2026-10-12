@@ -61,6 +61,18 @@ class Reading:
     output_tokens: int = 0
 
 
+_DATE = re.compile(r"\b(?:\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}|\d{4}-\d{1,2}-\d{1,2})\b")
+_PERSONAL = re.compile(r"\b(?:date of birth|d\.?o\.?b|born on|i was born|my birth|my (?:future|chart|kundli|horoscope|"
+                       r"rashi|lagna|dasha)|birth (?:time|place|details))\b", re.I)
+
+
+def asks_about_own_chart(question: str) -> bool:
+    """A chat question about the asker's own birth chart ('my date of birth is 04-01-1983 ... my future'):
+    the document chat cannot compute charts, so the UI points to the birth-chart reading page."""
+    return bool(_PERSONAL.search(question)) or (bool(_DATE.search(question)) and
+                                                bool(re.search(r"\b(?:my|me|i)\b", question, re.I)))
+
+
 # ---------------------------------------------------------------- writers
 
 def _openai_like_call(client, model: str, messages: list[dict], max_tokens: int, temperature: float,

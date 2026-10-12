@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import random
+import threading
 import time
 from functools import lru_cache
 from pathlib import Path
@@ -89,6 +90,9 @@ def _without_blocked_sklearn() -> None:
         _log.warning("scikit-learn is blocked by Smart App Control; loading sentence-transformers without it")
 
 
+_LOAD_LOCK = threading.Lock()
+
+
 @lru_cache(maxsize=2)
 def load_local_model(model: str, dims: int):
     """A sentence-transformers model, text tower only. Loaded on first use and kept for the process:
@@ -147,7 +151,8 @@ class Embedder:
 
     def _local_model(self):
         if self._local is None:
-            self._local = load_local_model(self.model, self.dims)
+            with _LOAD_LOCK:  # the UI's background warm-up and a first question may both get here
+                self._local = load_local_model(self.model, self.dims)
         return self._local
 
     def warm_up(self) -> None:

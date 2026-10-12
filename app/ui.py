@@ -322,10 +322,21 @@ def chat_view(settings: Settings, user: service.User) -> None:
             source_panel(settings)
     question = st.chat_input("Ask a question about the documents")
     if question:
+        from mmrag.astro.reading import asks_about_own_chart
+
+        st.session_state["own_chart_hint"] = asks_about_own_chart(question)
         with main:
             with st.chat_message("user"):
                 st.markdown(question)
             ask(settings, user, question)
+    if st.session_state.get("own_chart_hint"):
+        with main:
+            st.info("This chat answers from the books only and cannot calculate your chart. For a reading of "
+                    "your own chart, enter your birth date, time and place on the birth chart page.")
+            if st.button("🪐 Open the birth chart reading", key="own-chart-hint"):
+                st.session_state.pop("own_chart_hint", None)
+                st.session_state["view"] = "reading"
+                st.rerun()
 
 
 def main() -> None:
