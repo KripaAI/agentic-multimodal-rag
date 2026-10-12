@@ -158,6 +158,37 @@ def source_panel(settings: Settings) -> None:
 
 # ---------------------------------------------------------------- chat
 
+def _chart_reading(settings: Settings, question: str) -> bool:
+    """A message with the asker's birth details gets a chart reading (computed chart, written by the
+    fine-tuned model) instead of a document answer. True when it was handled here."""
+    import time
+
+    from mmrag.astro.chat import chart_reply
+    from mmrag.astro.reading import asks_about_own_chart
+
+    if not asks_about_own_chart(question):
+        return False
+    started = time.monotonic()
+    with st.status("Reading your birth details…", expanded=False) as status:
+        try:
+            status.update(label="Calculating your chart and writing the reading… (up to a minute or two)")
+            answer = chart_reply(settings, question)
+        except Exception as e:  # noqa: BLE001 - fall back to the document agent
+            status.update(label=f"The chart reading failed ({type(e).__name__}); answering from the books",
+                          state="error")
+            return False
+        if answer is None:
+            status.update(label="No birth details found", state="complete")
+            return False
+        status.update(label=f"Done in {time.monotonic() - started:.0f} s", state="complete")
+    st.session_state["own_chart_hint"] = False
+    st.session_state.setdefault("chat_history", []).append({
+        "question": question, "answer": answer, "cost": None,
+        "latency_ms": int((time.monotonic() - started) * 1000), "trace_id": None})
+    st.rerun()
+    return True
+
+
 def ask(settings: Settings, user: service.User, question: str) -> None:
     from mmrag.agent.graph import run_query
 
@@ -165,6 +196,8 @@ def ask(settings: Settings, user: service.User, question: str) -> None:
         service.check_limits(settings, user.user_id)
     except service.LimitReached as e:
         st.warning(str(e))  # no API call is made
+        return
+    if _chart_reading(settings, question):
         return
     thread = st.session_state.setdefault("thread_id", uuid.uuid4().hex[:12])
     with st.status("Working…", expanded=False) as status:

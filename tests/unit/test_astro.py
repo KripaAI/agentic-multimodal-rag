@@ -280,3 +280,32 @@ def test_questions_about_the_askers_own_chart_are_recognised():
     assert asks_about_own_chart("what is my lagna")
     assert not asks_about_own_chart("What does Saturn in the 7th house give?")
     assert not asks_about_own_chart("Which charts in the books have Mars in Leo?")
+
+
+@needs_ephemeris
+def test_birth_details_in_the_chat_get_a_chart_reading(settings):
+    from mmrag.astro.chat import BirthDetails, chart_reply
+    from mmrag.astro.reading import Reading
+
+    full = BirthDetails(name="Kripa", date="1981-04-10", time="12:30", place="Vaishali, Bihar", latitude=25.68,
+                        longitude=85.21, timezone="Asia/Kolkata", question="future")
+    seen = {}
+
+    def reading_fn(s, chart, question=None, writer="astro"):
+        seen.update(chart=chart, question=question, writer=writer)
+        return Reading(text="A reading [1].", model="fake", passages=[], cited=[], notices=["a note"], chart=chart)
+
+    msg = "My name is kripa, my date of birth is 10-04-1981, born in vaishali at 12:30 PM. My future?"
+    answer = chart_reply(settings, msg, extract=lambda s, m: full, reading_fn=reading_fn)
+    text = "\n".join(b["content"]["markdown"] for b in answer["blocks"])
+    assert "born 10 April 1981 at 12:30 in Vaishali, Bihar" in text and "| Lagna | Cancer |" in text
+    assert "A reading [1]." in text and answer["notices"] == ["a note"]
+    assert seen["question"] == "future" and seen["writer"] == "openai"  # no WRITER_BASE_URL in this config
+
+    no_time = full.model_copy(update={"time": None})
+    answer = chart_reply(settings, msg, extract=lambda s, m: no_time, reading_fn=reading_fn)
+    assert "I also need the time of birth" in answer["blocks"][0]["content"]["markdown"]
+
+    assert chart_reply(settings, "What does Saturn in the 7th house give?", extract=None) is None
+    no_date = BirthDetails()
+    assert chart_reply(settings, "what is my lagna", extract=lambda s, m: no_date) is None
