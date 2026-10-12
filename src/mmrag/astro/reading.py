@@ -232,12 +232,15 @@ _BARE_CITE = re.compile(r"(?<![\w\[])P(\d{1,2})\b")  # "covered in P5": a citati
 _NUM = re.compile(r"P?\s*(\d+)", re.I)
 
 
+# Each pattern matches the whole name as written, so the [n] goes after it ("Bhrigu Sutras [3]", not
+# "Bhrigu [3] Sutras").
 BOOK_NAMES = {"Phaladeepika": r"Phala\s*-?\s*deepika|Phaldeepika|Phaladipika", "Saravali": r"Saravali",
-              "Bhrigu Sutras": r"Bhrigu", "Brihat Jataka": r"Brihat\s+Jatak", "Jataka Parijata": r"Jataka\s+Parijata",
-              "Raman": r"\bRaman\b|How\s+to\s+Judge\s+a\s+Horoscope", "Sanketa Nidhi": r"Sanketa\s*nidhi",
-              "Chamatkar Chintamani": r"Chamatkar", "Uttara Kalamrita": r"Uttara\s+Kalamrita",
-              "Brihat Parashara Hora Shastra": r"Parashara\s+Hora|\bBPHS\b", "Saturn: Friend and Guide":
-              r"Saturn[-\s]+Friend"}
+              "Bhrigu Sutras": r"Bhrigu(?:\s+Sutras?)?", "Brihat Jataka": r"Brihat\s+Jataka?",
+              "Jataka Parijata": r"Jataka\s+Parijata", "Raman": r"How\s+to\s+Judge\s+a\s+Horoscope|\bRaman\b",
+              "Sanketa Nidhi": r"Sanketa\s*nidhi", "Chamatkar Chintamani": r"Chamatkar(?:\s+Chintamani)?",
+              "Uttara Kalamrita": r"Uttara\s+Kalamrita",
+              "Brihat Parashara Hora Shastra": r"(?:Brihat\s+)?Parashara\s+Hora(?:\s+Shastra)?|\bBPHS\b",
+              "Saturn: Friend and Guide": r"Saturn[-\s]+Friend\s*(?:&|and)\s*Guide|Saturn[-\s]+Friend"}
 
 
 def link_named_books(text: str, passages: list[Passage], cited: list[Passage]) -> tuple[str, list[Passage]]:

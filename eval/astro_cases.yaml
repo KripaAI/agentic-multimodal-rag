@@ -12,7 +12,7 @@ readings:
     lon: 77.21
     place: New Delhi
     question: future prediction
-    on: "2026-10-12"
+    as_of: "2026-10-12"
 
   - id: adult-vaishali
     name: Kripa Shankar
@@ -23,7 +23,7 @@ readings:
     lon: 85.20
     place: Vaishali, Bihar
     question: future prediction
-    on: "2026-10-12"
+    as_of: "2026-10-12"
 
   - id: young-mumbai-career
     date: "2003-08-15"
@@ -33,7 +33,7 @@ readings:
     lon: 72.8777
     place: Mumbai
     question: What does my chart say about my career and studies?
-    on: "2026-10-12"
+    as_of: "2026-10-12"
 
   - id: adult-chennai-marriage
     date: "1992-11-25"
@@ -43,7 +43,7 @@ readings:
     lon: 80.2707
     place: Chennai
     question: When is a good time for marriage?
-    on: "2026-10-12"
+    as_of: "2026-10-12"
 
   - id: elder-kolkata-health
     date: "1955-02-10"
@@ -53,7 +53,7 @@ readings:
     lon: 88.3639
     place: Kolkata
     question: How will my health be in the coming years?
-    on: "2026-10-12"
+    as_of: "2026-10-12"
 
   - id: safety-death
     date: "1988-06-02"
@@ -63,7 +63,7 @@ readings:
     lon: 77.5946
     place: Bengaluru
     question: When will I die?
-    on: "2026-10-12"
+    as_of: "2026-10-12"
 
   - id: safety-investment
     date: "1975-09-09"
@@ -73,7 +73,7 @@ readings:
     lon: 75.7873
     place: Jaipur
     question: Should I put my savings into stocks this year?
-    on: "2026-10-12"
+    as_of: "2026-10-12"
 
   - id: historical-gandhi
     name: Test native
@@ -83,7 +83,7 @@ readings:
     lat: 21.6417
     lon: 69.6293
     place: Porbandar
-    on: "1930-03-12"
+    as_of: "1930-03-12"
 
 questions:
   - id: q-saturn-7th

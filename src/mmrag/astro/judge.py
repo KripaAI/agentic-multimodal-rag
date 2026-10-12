@@ -193,7 +193,9 @@ def run(settings: Settings, cases: dict, writers: list[str], judge: Callable[[st
                     if kind == "reading":
                         chart = compute_chart(parse_birth(c["date"], c["time"], c["tz"], c["lat"], c["lon"],
                                                           c.get("name"), c.get("place")))
-                        on = date.fromisoformat(c["on"]) if c.get("on") else None
+                        # "as_of", not "on": YAML reads a bare `on:` key as the boolean True
+                        as_of = c.get("as_of") or c.get(True)
+                        on = date.fromisoformat(str(as_of)) if as_of else None
                         r = reading_fn(settings, chart, question=c.get("question"), writer=writer,
                                        use_books=use_books, on=on)
                         request = (c.get("question") or "Give a full reading of this chart.")

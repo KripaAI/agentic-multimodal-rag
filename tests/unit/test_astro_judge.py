@@ -131,3 +131,19 @@ def test_code_written_sections_and_reference_facts():
     looped, cut = collapse_repetition("a line of text\n" + "- the Moon is not in the 5th\n" * 5)
     assert cut and looped.count("the Moon is not") == 2
     assert strip_factual_sections("**Relevant factors**\n- x\n\n**Summary**\nok") == "**Summary**\nok"
+
+
+def test_case_dates_survive_yaml():
+    """A bare `on:` key is the boolean True in YAML; the Gandhi case silently ran on today's date."""
+    cases = J.load_cases(PROJECT_ROOT / "eval" / "astro_cases.yaml")
+    gandhi = next(c for c in cases["readings"] if c["id"] == "historical-gandhi")
+    assert gandhi["as_of"] == "1930-03-12" and True not in gandhi
+
+
+def test_book_names_are_cited_after_the_whole_name():
+    from mmrag.astro.reading import resolve_citations
+
+    ps = [Passage(1, "c1", "bhrigu-sutras.pdf", [3], "Bhrigu text", "q"),
+          Passage(2, "c2", "saturn-friend-and-guide.pdf", [5], "Saturn-Friend & Guide text", "q")]
+    out = resolve_citations("The Bhrigu Sutras describe it. The Saturn-Friend & Guide view differs.", ps)[0]
+    assert out == "The Bhrigu Sutras [1] describe it. The Saturn-Friend & Guide [2] view differs."
