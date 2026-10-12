@@ -262,3 +262,23 @@ def test_moon_counting_rulers_and_dasha_labels_are_in_the_facts(child):
     assert "3rd Taurus (Venus); 4th Gemini (Rahu); 5th Cancer;" in facts
     assert "Scorpio - Mars" in facts and "Moon - mother, mind" in facts
     assert "Sub-periods (antardashas, NOT mahadashas) inside the Saturn mahadasha" in facts
+
+
+@needs_ephemeris
+def test_death_questions_get_a_fixed_answer_and_no_model_call(child):
+    from mmrag.astro.reading import write_reading
+    from mmrag.config import PROJECT_ROOT, load_settings
+
+    s = load_settings(PROJECT_ROOT / "config.yaml", {"DATABASE_URL": "postgresql://u:p@localhost:5432/mmrag"})
+    called = []
+    r = write_reading(s, child, question="When will I die?", write=lambda m: called.append(m),
+                      search_fn=lambda *a, **k: [], on=ON)
+    assert called == [] and r.model == "fixed answer" and "I can't tell you when you will die" in r.text
+    assert "Chart overview" not in r.text
+
+
+@needs_ephemeris
+def test_mars_as_significator_of_marriage_is_flagged(child):
+    stage = analysis.life_stage(child.birth.when_local.date(), ON)
+    notes = check_analysis("Mars, the natural karaka of marriage, is strong.", child, stage)
+    assert notes and "Mars the significator of the marriage" in notes[0]

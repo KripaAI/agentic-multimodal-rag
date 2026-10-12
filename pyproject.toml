@@ -17,7 +17,9 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 # Default run: unit + integration. Live tests (real OpenAI calls) only on request: -m live
-addopts = "-m 'not live' -ra"
+# -p no:langsmith_plugin: the LangSmith plugin (unused here) imports uuid_utils before mmrag can stand in
+# for it when Windows Smart App Control blocks its DLL.
+addopts = "-m 'not live' -ra -p no:langsmith_plugin"
 markers = [
     "unit: fast tests with no external services",
     "integration: needs the Docker PostgreSQL (docker compose up -d)",

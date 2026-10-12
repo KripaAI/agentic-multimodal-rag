@@ -147,3 +147,10 @@ def test_book_names_are_cited_after_the_whole_name():
           Passage(2, "c2", "saturn-friend-and-guide.pdf", [5], "Saturn-Friend & Guide text", "q")]
     out = resolve_citations("The Bhrigu Sutras describe it. The Saturn-Friend & Guide view differs.", ps)[0]
     assert out == "The Bhrigu Sutras [1] describe it. The Saturn-Friend & Guide [2] view differs."
+
+
+def test_uuid7_stand_in_is_a_valid_version_7_uuid():
+    from mmrag._blocked_dlls import _uuid7
+
+    a, b = _uuid7(), _uuid7()
+    assert a.version == 7 and a.variant == "specified in RFC 4122" and a != b

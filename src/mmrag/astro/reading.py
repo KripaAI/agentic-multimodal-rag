@@ -464,7 +464,7 @@ _SIGN_RULER_RE = re.compile(_SIGN + rf"\b[^.]{{0,40}}?\b(?:ruled|owned)\s+by\s+(
 _RULES_SIGN_RE = re.compile(rf"(?P<b>{_B})\s+(?:rules|owns)\s+" + _SIGN + r"\b")
 _KARAKA_RE = re.compile(rf"(?P<b>{_B})\b[^.]{{0,30}}?\b(?:is\s+)?(?:the\s+)?(?:natural\s+)?(?:karaka|significator)"
                         r"(?:\s*\([^)]*\))?\s+(?:of|for)\s+(?:the\s+)?(?P<t>mother|father|siblings?|brothers?|children|"
-                        r"wife|husband|spouse|mind|soul|speech|longevity|courage)\b", re.I)
+                        r"wife|husband|spouse|marriage|mind|soul|speech|longevity|courage)\b", re.I)
 _HOUSE_OF_RE = re.compile(rf"\b[Tt]he\s+{_ORD}(?:\s+house)?\s*(?:,\s*|\s+is\s+|\s+as\s+)?(?:also\s+)?the\s+house\s+of\s+"
                           r"(?:the\s+)?(?P<t>mother|father|children|spouse|marriage|partnership|career|profession|"
                           r"siblings|gains|income|wealth|enemies|disease|longevity|losses|expenses|fortune|dharma|"
@@ -472,7 +472,7 @@ _HOUSE_OF_RE = re.compile(rf"\b[Tt]he\s+{_ORD}(?:\s+house)?\s*(?:,\s*|\s+is\s+|\
 KARAKAS = {"mother": {"Moon"}, "father": {"Sun", "Jupiter"}, "sibling": {"Mars"}, "siblings": {"Mars"},
            "brother": {"Mars"}, "brothers": {"Mars"}, "children": {"Jupiter"}, "wife": {"Venus"},
            "husband": {"Jupiter"}, "spouse": {"Venus", "Jupiter"}, "mind": {"Moon"}, "soul": {"Sun"},
-           "speech": {"Mercury"}, "longevity": {"Saturn"}, "courage": {"Mars"}}
+           "speech": {"Mercury"}, "longevity": {"Saturn"}, "courage": {"Mars"}, "marriage": {"Venus", "Jupiter"}}
 HOUSE_TOPICS = {"self": {1}, "wealth": {2, 11}, "family": {2, 4}, "speech": {2}, "courage": {3}, "siblings": {3},
                 "mother": {4}, "home": {4}, "education": {4, 5}, "learning": {4, 5, 9}, "intelligence": {5},
                 "children": {5}, "enemies": {6}, "disease": {6}, "spouse": {7}, "marriage": {7},
@@ -689,6 +689,19 @@ def remove_flagged_sentences(text: str, chart: NatalChart, stage=None) -> tuple[
 
 # ---------------------------------------------------------------- the two entry points
 
+_DEATH_QUESTION = re.compile(r"\b(?:when\s+will\s+i\s+die|my\s+death|die\b|dying|death|lifespan|life\s+span|"
+                             r"how\s+long\s+will\s+i\s+live|longevity|ayu|maraka)\b", re.I)
+DEATH_ANSWER = (
+    "**Answer**\n\nI can't tell you when you will die or how long you will live, and I won't look for it in your "
+    "chart. No responsible astrologer can answer that, and a guess could cause real fear. Classical texts do discuss "
+    "longevity, but they describe tendencies for study, not dates, and they are not meant to be used this way.\n\n"
+    "What matters far more is how you look after yourself: regular check-ups with a doctor, good sleep, steady "
+    "routines and people you can talk to. If this question comes from worry about your health, please speak to a "
+    "doctor; if it comes from fear or low mood, a counsellor or someone you trust can help.\n\n"
+    "If you would like, ask me about the strengths in your chart, your current period, or your work and "
+    "relationships instead.")
+
+
 def write_reading(settings: Settings, chart: NatalChart, question: str | None = None,
                   writer: WriterName = "astro", use_books: bool = True, on: date | None = None,
                   write: Callable[[list[dict]], Written] | None = None,
@@ -706,6 +719,9 @@ def write_reading(settings: Settings, chart: NatalChart, question: str | None = 
                                search_fn, exclude=_CHILD_EXCLUDE if stage.stage == "child" else None)
     from mmrag.astro.compose import collapse_repetition, factual_sections, strip_factual_sections
 
+    if question and _DEATH_QUESTION.search(question):  # safety: no model, no chart commentary
+        return Reading(text=DEATH_ANSWER, model="fixed answer", passages=[], cited=[], notices=[], chart=chart,
+                       facts=facts, seconds=time.monotonic() - started)
     shown = factual_sections(chart, on)
     sections = "Answer, Classical view, Dasha timing, Summary, Optional remedies" if question else \
         "Classical view, Dasha timing, Summary, Optional remedies"
