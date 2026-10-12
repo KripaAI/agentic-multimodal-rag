@@ -82,6 +82,14 @@ def navamsa(longitude: float) -> str:
     return SIGNS[(start + part) % 12]
 
 
+def navamsa_dignity(body: str, d9: str) -> str | None:
+    """Exalted, debilitated or own sign in the Navamsa (planets only)."""
+    if body not in EXALTED:
+        return None
+    return ("exalted" if d9 == EXALTED[body] else "debilitated" if d9 == DEBILITATED[body]
+            else "own sign" if SIGN_LORD[d9] == body else None)
+
+
 def aspects(chart: NatalChart) -> dict[str, list[int]]:
     """Houses each planet aspects (Rahu and Ketu left out)."""
     out = {}
@@ -155,6 +163,7 @@ class Yoga:
     name: str
     condition: str
     present: bool = True
+    houses: set[int] = field(default_factory=set)  # where it forms, when it is a conjunction in one house
 
 
 def yogas(chart: NatalChart) -> list[Yoga]:
@@ -165,9 +174,9 @@ def yogas(chart: NatalChart) -> list[Yoga]:
     if jup_from_moon in KENDRA:
         out.append(Yoga("Gajakesari", f"Jupiter in the {ordinal(jup_from_moon)} from the Moon, a kendra"))
     if p["Sun"].sign == p["Mercury"].sign:
-        out.append(Yoga("Budha-Aditya", f"Sun and Mercury together in {p['Sun'].sign}"))
+        out.append(Yoga("Budha-Aditya", f"Sun and Mercury together in {p['Sun'].sign}", houses={p["Sun"].house}))
     if p["Moon"].sign == p["Mars"].sign:
-        out.append(Yoga("Chandra-Mangala", f"Moon and Mars together in {moon.sign}"))
+        out.append(Yoga("Chandra-Mangala", f"Moon and Mars together in {moon.sign}", houses={moon.house}))
     for b, name in MAHAPURUSHA.items():
         if p[b].dignity in ("exalted", "own sign") and p[b].house in KENDRA:
             out.append(Yoga(name, f"{b} {p[b].dignity} in the {ordinal(p[b].house)} house, a kendra"))
@@ -193,7 +202,8 @@ def yogas(chart: NatalChart) -> list[Yoga]:
                 ka = [ordinal(h) for h in (1, 4, 7, 10) if lord_of[h] == a]
                 tb = [ordinal(h) for h in (1, 5, 9) if lord_of[h] == b]
                 out.append(Yoga("Raja yoga", f"{a} (lord of the {' and '.join(ka)}) joins {b} (lord of the "
-                                f"{' and '.join(tb)}) in {p[a].sign}"))
+                                f"{' and '.join(tb)}) in {p[a].sign}, the {ordinal(p[a].house)} house",
+                                houses={p[a].house}))
     wealth_lords, luck_lords = {lord_of[2], lord_of[11]}, {lord_of[1], lord_of[5], lord_of[9]}
     seen = set()
     for a in wealth_lords:
@@ -202,7 +212,7 @@ def yogas(chart: NatalChart) -> list[Yoga]:
                 seen.add(frozenset((a, b)))
                 out.append(Yoga("Dhana yoga", f"{a} ({', '.join(ordinal(h) for h in (2, 11) if lord_of[h] == a)} "
                                 f"lord) joins {b} ({', '.join(ordinal(h) for h in (1, 5, 9) if lord_of[h] == b)} "
-                                f"lord) in {p[a].sign}"))
+                                f"lord) in {p[a].sign}, the {ordinal(p[a].house)} house", houses={p[a].house}))
     for h, name in ((6, "Harsha"), (8, "Sarala"), (12, "Vimala")):
         lord = lord_of[h]
         if p[lord].house in DUSTHANA:
@@ -232,7 +242,9 @@ def analysis_facts(chart: NatalChart, on: date | None = None) -> str:
     for b in BODIES:
         pl = p[b]
         d9 = navamsa(pl.longitude)
-        parts = [f"Navamsa {d9}" + (" (Vargottama)" if d9 == pl.sign else "")]
+        d9_dig = navamsa_dignity(b, d9)
+        parts = [f"Navamsa {d9}" + (" (Vargottama)" if d9 == pl.sign else "")
+                 + (f" ({d9_dig} in the Navamsa)" if d9_dig else "")]
         if b in MOOLATRIKONA and pl.sign == MOOLATRIKONA[b][0] and MOOLATRIKONA[b][1] <= pl.degree < MOOLATRIKONA[b][2]:
             parts.append("in its moolatrikona range")
         if not pl.dignity and (rel := relation_to_sign_lord(b, pl.sign)):
@@ -242,6 +254,9 @@ def analysis_facts(chart: NatalChart, on: date | None = None) -> str:
         lines.append(f"- {b}: {', '.join(parts)}")
     d9_lagna = navamsa(chart.lagna.longitude)
     lines.append(f"- Lagna: Navamsa {d9_lagna}" + (" (Vargottama)" if d9_lagna == lagna else ""))
+    lines.append("House lords and where they sit: " + "; ".join(
+        f"{ordinal(h)} lord {SIGN_LORD[sign_at(lagna, h)]} in the {ordinal(p[SIGN_LORD[sign_at(lagna, h)]].house)}"
+        for h in range(1, 13)) + ".")
     lines.append("Aspects (Parashari; Rahu and Ketu not counted):")
     asp = aspects(chart)
     for b in PLANETS:

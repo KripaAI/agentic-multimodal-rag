@@ -288,14 +288,14 @@ _HOUSE_RE = re.compile(_BODIES + _LINK + r"\s+in\s+the\s+" + _ORD + r"\b(?!\s+(?
 _SIGN_RE = re.compile(_BODIES + _LINK + r"\s+in\s+" + _SIGN + r"\b")
 _LAGNA_RE = re.compile(_SIGN + r"\s+(?:Lagna|Ascendant|ascendant|lagna|rising)|(?:Lagna|Ascendant|ascendant)\s+(?:is\s+|in\s+)?" + _SIGN)
 _DIGNITY_RE = re.compile(_BODIES + _LINK + r"(?:\s*,)?\s+(exalted|debilitated|in\s+(?:its|his|her|their)\s+own\s+sign)\b")
-_LORD_AFTER_RE = re.compile(rf"(?P<body>{_B}),?\s+(?:the\s+)?(?:lord|ruler)\s+of\s+the\s+{_ORD}(?:\s*(?:,|and)\s*(?:the\s+)?{_ORD})?")
+_LORD_AFTER_RE = re.compile(rf"(?P<body>{_B}),?\s+(?:the\s+)?(?:lord|ruler)\s+of\s+[Tt]he\s+{_ORD}(?:\s*(?:,|and)\s*(?:[Tt]he\s+)?{_ORD})?")
 _LORD_PAREN_RE = re.compile(rf"(?P<body>{_B})\s*\(\s*{_ORD}(?:\s*(?:,|and)\s*{_ORD})?\s+lords?")
 _LORD_BEFORE_RE = re.compile(rf"\b{_ORD}\s+lord,?\s+(?:the\s+)?(?P<body>{_B})\b")
 _DASHA_RE = re.compile(rf"(?P<body>{_B})\s+(?P<kind>maha|antar)\s*dasha[^()\n]{{0,30}}\((\d{{4}}-\d\d-\d\d)\s+(?:to|-|–)\s+(\d{{4}}-\d\d-\d\d)\)",
                        re.I)
 
 _DASHA_YEARS_RE = re.compile(rf"(?P<body>{_B})\s+maha\s*dasha[^.()\n]{{0,25}}?\(?(?:from\s+)?(\d{{4}})\s*(?:-|–|to)\s*(\d{{4}})\b", re.I)
-_HOUSE_KIND_RE = re.compile(rf"\b(?:the\s+)?{_ORD}(?:\s+house)?(?:\s+(?:is|being)|\s*,|\s*\()\s*(?:a|an|the)\s+"
+_HOUSE_KIND_RE = re.compile(rf"\b(?:[Tt]he\s+)?{_ORD}(?:\s+house)?(?:\s+(?:is|being)|\s*,|\s*\()\s*(?:a|an|the)\s+"
                             r"(kendra|trikona|trine|angular|dusthana|upachaya)\b", re.I)
 _HOUSE_KINDS = {"kendra": {1, 4, 7, 10}, "angular": {1, 4, 7, 10}, "trikona": {1, 5, 9}, "trine": {1, 5, 9},
                 "dusthana": {6, 8, 12}, "upachaya": {3, 6, 10, 11}}
@@ -409,23 +409,58 @@ def reading_rules(stage, with_passages: bool, chart: NatalChart | None = None) -
     return "Rules for this reading:\n" + "\n".join(f"{n}. {r}" for n, r in enumerate(rules, 1))
 
 
-_FROM_SIGN_RE = re.compile(rf"\bthe\s+{_ORD}\s+(?:house\s+|sign\s+)?from\s+(?:the\s+)?(?P<ref>{_B}|Lagna|Ascendant)"
+_FROM_SIGN_RE = re.compile(rf"\b[Tt]he\s+{_ORD}\s+(?:house\s+|sign\s+)?from\s+(?:the\s+)?(?P<ref>{_B}|Lagna|Ascendant)"
                            rf"(?:\s*\([^)]*\))?\s*(?:,\s*)?(?:is|=|falls in|being)\s+(?:in\s+)?{_SIGN}")
-_IN_FROM_RE = re.compile(_BODIES + _LINK + rf"\s+in\s+the\s+{_ORD}\s+(?:house\s+)?from\s+(?:the\s+)?"
+_IN_FROM_RE = re.compile(_BODIES + _LINK + rf"\s+in\s+[Tt]he\s+{_ORD}\s+(?:house\s+)?from\s+(?:the\s+)?"
                          rf"(?P<ref>{_B}|Lagna|Ascendant)\b")
 _ASPECT_HOUSE_RE = re.compile(rf"(?P<a>{_B})(?:\s+also)?\s+(?:aspects|fully aspects|casts\s+(?:its|his|her)\s+"
-                              rf"(?:\w+\s+)?aspect\s+on)\s+the\s+{_ORD}(?:\s+house)?\b")
+                              rf"(?:\w+\s+)?aspect\s+on)\s+[Tt]he\s+{_ORD}(?:\s+house)?\b")
 _ASPECT_BODY_RE = re.compile(rf"(?P<a>{_B})(?:\s+also)?\s+aspects\s+(?:the\s+)?(?P<b>{_B}|Lagna|Ascendant)\b")
-_ASPECTED_RE = re.compile(rf"(?P<b>{_B}|Lagna|Ascendant|the\s+{_ORD}(?:\s+house)?)\s+(?:is|are)\s+(?:also\s+)?"
-                          rf"aspected\s+by\s+(?P<a>{_B})\b")
-_CANCELLED_RE = re.compile(rf"(?P<a>{_B})(?:'s)?(?:[^.]{{0,60}}?\bits)?\s+(?:debility|debilitation)\s+(?:is\s+)?"
+_ASPECTED_RE = re.compile(rf"(?P<b>{_B}|Lagna|Ascendant|[Tt]he\s+{_ORD}(?:\s+house)?)\s+(?:is|are)\s+(?:also\s+)?"
+                          rf"aspected\s+by\s+(?:the\s+)?(?P<a>{_B})\b")
+_CANCELLED_RE = re.compile(rf"(?P<a>{_B})(?:'s)?(?:(?:(?!{_B})[^.]){{0,60}}?\bits)?\s+(?:debility|debilitation)\s+(?:is\s+)?"
                            rf"(?:also\s+|fully\s+|partly\s+)?(?:cancelled|canceled|relieved|removed)", re.I)
 _CANCELLED_OF_RE = re.compile(rf"(?:cancelled|canceled)\s+debility\s+(?:of|for)\s+(?P<a>{_B})"
                               rf"|neecha\s+bhanga(?:\s+raja\s+yoga)?\s+(?:of|for)\s+(?P<b>{_B})", re.I)
-_RECEIVES_RE = re.compile(rf"(?P<t>\bthe\s+{_ORD}(?:\s+house)?|\b{_B}|\bLagna)\b[^.]{{0,100}}?\breceives?\s+"
+_RECEIVES_RE = re.compile(rf"(?P<t>\b[Tt]he\s+{_ORD}(?:\s+house)?|\b{_B}|\bLagna)\b[^.]{{0,100}}?\breceives?\s+"
                           rf"(?:the\s+)?(?:full\s+)?aspects?\s+(?:of|from)\s+(?P<from>{_B}(?:\s*(?:,|and|&)\s*{_B})*)")
 _JOINED_RE = re.compile(rf"(?P<a>{_B})\b(?:\s+is|\s+are|\s*,)?(?:\s+also)?\s+(?:joined|conjoined|accompanied)\s+"
                         rf"(?:by|with)\s+(?:a\s+\w+\s+\(?)?(?:the\s+)?(?P<with>{_B}(?:\s*(?:,|and|&)\s*(?:the\s+)?{_B})*)")
+# "the Moon is in Pisces, its own sign"
+_OWN_AFTER_SIGN_RE = re.compile(_BODIES + _LINK + r"\s+in\s+" + _SIGN + r"\s*,\s*(?:which\s+is\s+)?(?:its|his|her|their)\s+"
+                                r"own\s+sign")
+# "Mars ... exalted in Navamsa Cancer" / "debilitated in the Navamsa"
+_D9_DIGNITY_RE = re.compile(rf"(?P<a>{_B})\b[^.]{{0,80}}?\b(?P<d>exalted|debilitated|in\s+(?:its|his|her)\s+own\s+sign)"
+                            rf"\s+in\s+(?:the\s+)?(?:Navamsa|Navamsha|D-?9)\b", re.I)
+# "the 10th lord is in the 5th", "the 10th lord, Mercury, sits in the 7th"
+_LORD_IN_RE = re.compile(rf"\b(?:[Tt]he\s+)?{_ORD}\s+lord(?:\s*,)?(?:\s+(?:the\s+)?{_B})?(?:\s*,)?"
+                         + _LINK + rf"\s+in\s+[Tt]he\s+{_ORD}\b(?!\s+(?:from|lord))")
+# "Moon joins Mercury in the 11th" / "the 11th lord Moon joins the 1st lord Mercury in the 11th"
+_JOINS_IN_RE = re.compile(rf"(?P<a>{_B})\s+(?:joins|conjoins|is\s+joined\s+with)\s+(?:the\s+\w+\s+lord\s+)?(?P<b>{_B})"
+                          rf"\s+in\s+[Tt]he\s+{_ORD}\b(?!\s+from)")
+# "the Dhana yoga in the 11th", "forming a Raja yoga in the 5th"
+_YOGA_IN_RE = re.compile(r"\b(?P<y>Raja|Dhana|Budha-Aditya|Chandra-Mangala)\s+yoga\s+(?:is\s+)?(?:formed\s+)?in\s+the\s+"
+                         + _ORD + r"\b", re.I)
+# textbook facts
+_SIGN_RULER_RE = re.compile(_SIGN + rf"\b[^.]{{0,40}}?\b(?:ruled|owned)\s+by\s+(?:the\s+)?(?P<b>{_B})\b")
+_RULES_SIGN_RE = re.compile(rf"(?P<b>{_B})\s+(?:rules|owns)\s+" + _SIGN + r"\b")
+_KARAKA_RE = re.compile(rf"(?P<b>{_B})\b[^.]{{0,30}}?\b(?:is\s+)?(?:the\s+)?(?:natural\s+)?(?:karaka|significator)"
+                        r"(?:\s*\([^)]*\))?\s+(?:of|for)\s+(?:the\s+)?(?P<t>mother|father|siblings?|brothers?|children|"
+                        r"wife|husband|spouse|mind|soul|speech|longevity|courage)\b", re.I)
+_HOUSE_OF_RE = re.compile(rf"\b[Tt]he\s+{_ORD}(?:\s+house)?\s*(?:,\s*|\s+is\s+|\s+as\s+)?(?:also\s+)?the\s+house\s+of\s+"
+                          r"(?:the\s+)?(?P<t>mother|father|children|spouse|marriage|partnership|career|profession|"
+                          r"siblings|gains|income|wealth|enemies|disease|longevity|losses|expenses|fortune|dharma|"
+                          r"intelligence|home|courage|speech|family|self|education|learning)\b", re.I)
+KARAKAS = {"mother": {"Moon"}, "father": {"Sun", "Jupiter"}, "sibling": {"Mars"}, "siblings": {"Mars"},
+           "brother": {"Mars"}, "brothers": {"Mars"}, "children": {"Jupiter"}, "wife": {"Venus"},
+           "husband": {"Jupiter"}, "spouse": {"Venus", "Jupiter"}, "mind": {"Moon"}, "soul": {"Sun"},
+           "speech": {"Mercury"}, "longevity": {"Saturn"}, "courage": {"Mars"}}
+HOUSE_TOPICS = {"self": {1}, "wealth": {2, 11}, "family": {2, 4}, "speech": {2}, "courage": {3}, "siblings": {3},
+                "mother": {4}, "home": {4}, "education": {4, 5}, "learning": {4, 5, 9}, "intelligence": {5},
+                "children": {5}, "enemies": {6}, "disease": {6}, "spouse": {7}, "marriage": {7},
+                "partnership": {7}, "longevity": {8}, "father": {9, 10}, "fortune": {9}, "dharma": {9},
+                "career": {10}, "profession": {10}, "gains": {11}, "income": {11}, "losses": {12}, "expenses": {12}}
+_BODY_IS_LORD_RE = re.compile(rf"(?P<a>{_B})\s*(?:,|\()\s*(?:[Tt]he\s+)?{_ORD}(?:\s+(?:and|&)\s+{_ORD})?\s+lord\b")
 _VARGOTTAMA_RE = re.compile(rf"(?P<a>{_B})(?:\s+is|\s*,|\s+being)?(?:\s+also)?\s+vargottama", re.I)
 _CHILD_TOPICS = re.compile(r"\b(poverty|penury|daridra|wealth|riches|career|profession|marriage|spouse|wife|"
                            r"husband|divorce|death|longevity)\b", re.I)
@@ -440,6 +475,7 @@ def check_analysis(text: str, chart: NatalChart, stage=None) -> list[str]:
     """Claims the computed analysis decides: positions counted from a planet, aspects, Vargottama,
     yogas the chart does not have, and adult topics in a child's reading."""
     from mmrag.astro.analysis import YOGA_NAMES, aspects, house_from, navamsa, sign_at, yogas
+    from mmrag.astro.natal import SIGN_LORD
 
     problems: list[str] = []
     for m in _FROM_SIGN_RE.finditer(text):
@@ -468,7 +504,7 @@ def check_analysis(text: str, chart: NatalChart, stage=None) -> list[str]:
                             f"{', '.join(ordinal(x) for x in asp[a])})")
     for m in _ASPECTED_RE.finditer(text):
         a, target = m.group("a"), m.group("b")
-        h = int(re.search(r"\d+", target).group()) if target.startswith("the") else house_of(target)
+        h = int(re.search(r"\d+", target).group()) if target.lower().startswith("the") else house_of(target)
         if a in asp and h not in asp[a]:
             problems.append(f"says {target} is aspected by {a}; it is not")
     from mmrag.astro.analysis import neecha_bhanga
@@ -496,6 +532,64 @@ def check_analysis(text: str, chart: NatalChart, stage=None) -> list[str]:
             if b != a and chart.placements[b].sign != chart.placements[a].sign:
                 problems.append(f"says {a} is joined by {b}; {a} is in {chart.placements[a].sign} and {b} in "
                                 f"{chart.placements[b].sign}")
+    from mmrag.astro.analysis import navamsa_dignity, sign_at
+
+    for m in _OWN_AFTER_SIGN_RE.finditer(text):
+        for body in _bodies(m.group("bodies")):
+            if chart.placements[body].sign == m.group(2) and getattr(chart.placements[body], "dignity", None) != "own sign":
+                problems.append(f"calls {m.group(2)} {body}'s own sign; {m.group(2)} is ruled by "
+                                f"{SIGN_LORD[m.group(2)]}")
+    for m in _D9_DIGNITY_RE.finditer(text):
+        a = m.group("a")
+        claim = "own sign" if m.group("d").lower().startswith("in") else m.group("d").lower()
+        actual = navamsa_dignity(a, navamsa(chart.placements[a].longitude))
+        if a in SIGN_LORD.values() and actual != claim:
+            problems.append(f"calls {a} {claim} in the Navamsa; in the Navamsa ({navamsa(chart.placements[a].longitude)}) "
+                            f"it is {actual or 'neither exalted, debilitated nor in its own sign'}")
+    for m in _LORD_IN_RE.finditer(text):
+        n, h = int(m.group(1)), int(m.group(len(m.groups())))
+        lord = SIGN_LORD[sign_at(chart.lagna.sign, n)]
+        if chart.placements[lord].house != h:
+            problems.append(f"says the {ordinal(n)} lord is in the {ordinal(h)}; the {ordinal(n)} lord {lord} is in "
+                            f"the {ordinal(chart.placements[lord].house)}")
+    for m in _JOINS_IN_RE.finditer(text):
+        h = int(m.group(3))
+        for body in (m.group("a"), m.group("b")):
+            if chart.placements[body].house != h:
+                problems.append(f"places {body} in the {ordinal(h)}; it is in the {ordinal(chart.placements[body].house)}")
+    found = yogas(chart)
+    for m in _YOGA_IN_RE.finditer(text):
+        name, h = m.group("y").lower(), int(m.group(2))
+        where = set().union(*[y.houses for y in found if y.name.lower().startswith(name)] or [set()])
+        if where and h not in where:
+            problems.append(f"places the {m.group('y')} yoga in the {ordinal(h)}; it forms in the "
+                            f"{' and '.join(ordinal(x) for x in sorted(where))}")
+    for m in _SIGN_RULER_RE.finditer(text):
+        sign, b = m.group(1), m.group("b")
+        if SIGN_LORD[sign] != b:
+            problems.append(f"says {sign} is ruled by {b}; its lord is {SIGN_LORD[sign]}")
+    for m in _RULES_SIGN_RE.finditer(text):
+        b, sign = m.group("b"), m.group(2)
+        if SIGN_LORD[sign] != b:
+            problems.append(f"says {b} rules {sign}; its lord is {SIGN_LORD[sign]}")
+    for m in _KARAKA_RE.finditer(text):
+        b, topic = m.group("b"), m.group("t").lower()
+        if b not in KARAKAS.get(topic, {b}):
+            problems.append(f"calls {b} the significator of the {topic}; that is {' or '.join(sorted(KARAKAS[topic]))}")
+    for m in _HOUSE_OF_RE.finditer(text):
+        h, topic = int(m.group(1)), m.group("t").lower()
+        if h not in HOUSE_TOPICS.get(topic, {h}):
+            problems.append(f"calls the {ordinal(h)} the house of {topic}; that is the "
+                            f"{' or '.join(ordinal(x) for x in sorted(HOUSE_TOPICS[topic]))}")
+    for m in _BODY_IS_LORD_RE.finditer(text):
+        a = m.group("a")
+        rules = getattr(chart.placements[a], "lord_of", None)
+        if rules is None or a in ("Rahu", "Ketu"):
+            continue
+        for n in (int(x) for x in m.groups()[1:] if x):
+            if n not in rules:
+                problems.append(f"calls {a} the {ordinal(n)} lord; it rules the "
+                                f"{' and '.join(ordinal(x) for x in rules) or 'no house'}")
     for m in _VARGOTTAMA_RE.finditer(text):
         a = m.group("a")
         if navamsa(chart.placements[a].longitude) != chart.placements[a].sign:

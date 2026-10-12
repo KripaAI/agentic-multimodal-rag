@@ -82,7 +82,7 @@ def test_gandhi_has_gajakesari_and_malavya():
 def test_facts_carry_the_analysis(child):
     facts = analysis.analysis_facts(child, ON)
     assert "Age on 2026-10-12: 6 (child)." in facts
-    assert "- Jupiter: Navamsa Capricorn (Vargottama), debilitated" in facts
+    assert "- Jupiter: Navamsa Capricorn (Vargottama) (debilitated in the Navamsa), debilitated" in facts
     assert "from Jupiter (Capricorn): Mars, Jupiter, Saturn in the 1st" in facts and "Venus in the 5th" in facts
     assert "Classical cancellation (kendra rules, Phaladeepika): not met." in facts  # Mercury
 
@@ -165,3 +165,46 @@ def test_house_kinds_after_a_comma_and_wrong_conjunctions_are_flagged():
     notes = " ".join(check_positions(text, adult) + check_analysis(text, adult, stage))
     assert "3rd house a trikona" in notes and "Moon is joined by Rahu" in notes
     assert "Venus is joined by Mars" not in notes and "Jupiter is joined by Saturn" not in notes
+
+
+@needs_ephemeris
+def test_the_third_child_reading_errors_are_all_caught(child):
+    """Every error in the reading of 2026-10-12 13:17 for the child, and true statements left alone."""
+    stage = analysis.life_stage(child.birth.when_local.date(), ON)
+    wrong = ("The Moon is in Pisces, its own sign, and the 11th lord Moon joins the 1st lord Mercury in the 11th. "
+             "Mars is exalted in the 5th and also exalted in Navamsa Cancer. The 10th lord is in the 5th. "
+             "It describes Virgo as a feminine sign, ruled by Mars. Mars is the significator of the mother, and the "
+             "5th is the house of the mother. The Dhana yoga in the 11th suggests aptitude.")
+    notes = " ".join(check_analysis(wrong, child, stage))
+    for expected in ("Pisces Moon's own sign", "Mars exalted in the Navamsa", "10th lord is in the 5th",
+                     "places Moon in the 11th", "Virgo is ruled by Mars", "Mars the significator of the mother",
+                     "5th the house of mother", "Dhana yoga in the 11th"):
+        assert expected in notes, expected
+    right = ("Venus is in Taurus, its own sign. Mars is debilitated in the Navamsa. The 10th lord is in the 7th. "
+             "Pisces is ruled by Jupiter. The Moon is the significator of the mother, and the 4th is the house of "
+             "the mother. Mars is the significator of courage. The Dhana yoga in the 7th.")
+    assert check_analysis(right, child, stage) == []
+
+
+@needs_ephemeris
+def test_dasha_facts_give_the_balance_at_birth_and_the_sub_periods(child):
+    facts = child.facts(ON)
+    assert "balance AT BIRTH of 12.40 years (it ends on 2032-09-11)" in facts
+    assert "5.9 years left" in facts and "Next mahadasha: Mercury, 2032-09-11" in facts
+    assert "Mars 2026-03-15 to 2027-04-24 (running); Rahu 2027-04-24 to 2030-02-28" in facts
+    a = analysis.analysis_facts(child, ON)
+    assert "- Mars: Navamsa Cancer (debilitated in the Navamsa), exalted" in a
+    assert "10th lord Mercury in the 7th" in a and "in Pisces, the 7th house" in a
+
+
+@needs_ephemeris
+def test_the_fourth_child_reading(child):
+    """From the reading of 2026-10-12 after the textbook checks: one false alarm, two misses."""
+    stage = analysis.life_stage(child.birth.when_local.date(), ON)
+    text = ("Saturn is in its own sign Capricorn, Jupiter is debilitated but its debility is cancelled, and Mars is "
+            "exalted. Mercury is debilitated, but the Moon, the 2nd lord, is in the 7th with Mercury. The 7th house "
+            "is also aspected by the Moon. Venus, the 9th lord, is in its own sign.")
+    notes = " ".join(check_analysis(text, child, stage))
+    assert "Saturn's debility" not in notes and "Jupiter's debility" not in notes
+    assert "calls Moon the 2nd lord" in notes and "7th house is aspected by Moon" in notes
+    assert "Venus the 9th lord" not in notes

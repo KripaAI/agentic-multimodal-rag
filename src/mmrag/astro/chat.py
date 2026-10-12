@@ -60,7 +60,7 @@ def _text(markdown: str) -> dict:
 
 
 def _chart_table(reading: Reading) -> str:
-    from mmrag.astro.analysis import navamsa, yogas
+    from mmrag.astro.analysis import navamsa, navamsa_dignity, yogas
 
     c = reading.chart
 
@@ -68,7 +68,8 @@ def _chart_table(reading: Reading) -> str:
         d9 = navamsa(p.longitude)
         flags = ", ".join(x for x in ("R" if getattr(p, "retrograde", False) and name not in ("Rahu", "Ketu") else "",
                                       getattr(p, "dignity", None) or "", "combust" if getattr(p, "combust", False)
-                                      else "", "Vargottama" if d9 == p.sign else "") if x)
+                                      else "", "Vargottama" if d9 == p.sign else "",
+                                      f"D9 {navamsa_dignity(name, d9)}" if navamsa_dignity(name, d9) else "") if x)
         return f"| {name} | {p.sign} | {dms(p.degree)} | {p.house} | {p.nakshatra} {p.pada} | {d9} | {flags} |"
 
     rows = [row("Lagna", c.lagna)] + [row(b, c.placements[b]) for b in BODIES]
