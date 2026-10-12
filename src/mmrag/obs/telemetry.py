@@ -43,6 +43,18 @@ class JsonFormatter(logging.Formatter):
         return json.dumps(entry, ensure_ascii=False)
 
 
+class _SharedTimedRotatingFileHandler(logging.handlers.TimedRotatingFileHandler):
+    """Daily rotation that tolerates another process holding the log open. On Windows a file in use
+    cannot be renamed, so with the UI running every other command failed its midnight rotation and
+    printed a logging traceback. Rotation is then skipped; the file rotates on a later day."""
+
+    def rotate(self, source: str, dest: str) -> None:
+        try:
+            super().rotate(source, dest)
+        except PermissionError:
+            pass
+
+
 def _setup_logging(settings: Settings) -> None:
     obs = settings.observability
     root = logging.getLogger()
@@ -58,9 +70,7 @@ def _setup_logging(settings: Settings) -> None:
     if obs.log_file:
         path = settings.resolve(obs.log_file)
         path.parent.mkdir(parents=True, exist_ok=True)
-        rotating = logging.handlers.TimedRotatingFileHandler(
-            path, when="midnight", backupCount=30, encoding="utf-8"
-        )
+        rotating = _SharedTimedRotatingFileHandler(path, when="midnight", backupCount=30, encoding="utf-8")
         rotating.setFormatter(formatter)
         root.addHandler(rotating)
 

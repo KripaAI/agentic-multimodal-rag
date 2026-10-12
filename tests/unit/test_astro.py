@@ -84,7 +84,9 @@ def test_gandhis_chart_matches_the_published_one():
     assert chart.placements["Jupiter"].retrograde and chart.placements["Moon"].house == 10
     assert chart.placements["Venus"].dignity == "own sign" and chart.placements["Venus"].lord_of == [1, 8]
     assert chart.dashas[0].lord == "Mercury"  # Ashlesha
-    assert "Lagna (Ascendant): Libra" in chart.facts(date(1900, 1, 1))
+    facts = chart.facts(date(1900, 1, 1))
+    assert "Lagna (Ascendant): Libra" in facts
+    assert "- 1st house, Libra (lord Venus): Mars, Mercury, Venus" in facts and "- 3rd house, Sagittarius (lord Jupiter): empty" in facts
 
 
 @needs_ephemeris
@@ -188,3 +190,35 @@ def test_writer_settings_come_from_the_environment(settings):
     s = load_settings(PROJECT_ROOT / "config.yaml", env)
     assert s.secrets.writer_base_url == "https://x.modal.run/v1" and s.secrets.writer_api_key.get_secret_value() == "k"
     assert callable(get_writer(s, "astro"))
+
+
+def test_bare_citations_count_too():
+    text, cited, _ = resolve_citations("This is covered in P5, and P2 agrees.", _passages(6))
+    assert text == "This is covered in passage [5], and passage [2] agrees." and [p.n for p in cited] == [5, 2]
+
+
+@needs_ephemeris
+def test_the_checker_catches_the_errors_of_the_first_live_reading():
+    """Sentences from the first reading by astro-v2-8b (2026-10-12), for the chart above."""
+    chart = natal.compute_chart(parse_birth("1869-10-02", "07:12", "+04:38", 21.6417, 69.6293))
+    text = ("Rahu and Ketu are also in the 1st, which can make the native restless. The presence of Rahu and Ketu "
+            "in the 10th adds ambition. It is aspected by Saturn, lord of the 7th. Saturn is debilitated, though. "
+            "The native is running Rahu mahadasha (1927-06-20 to 1940-05-14). Venus is flanked by Mercury (9th and "
+            "12th lord) and Mars (2nd and 7th lord). The 10th lord Moon is in its own sign. Jupiter is retrograde "
+            "and in Aries. Rahu mahadasha (1922-05-15 to 1940-05-14) with Saturn antardasha (1927-06-20 to 1930-04-26).")
+    notes = " ".join(check_positions(text, chart))
+    for wrong in ("Rahu in the 1st", "Ketu in the 1st", "Ketu in the 10th", "Saturn debilitated",
+                  "Saturn lord of the 7th", "Rahu mahadasha as 1927-06-20"):
+        assert wrong in notes, wrong
+    assert len(check_positions(text, chart)) == 6  # the true statements raise nothing
+
+
+@needs_ephemeris
+def test_the_checker_catches_wrong_dasha_years_and_house_kinds():
+    """From the second live reading (2026-10-12)."""
+    chart = natal.compute_chart(parse_birth("1869-10-02", "07:12", "+04:38", 21.6417, 69.6293))
+    text = ("The native is running Rahu mahadasha (1922-1940). The Sun mahadasha follows from 1940 to 1956. "
+            "The 4th is a trikona (trine). The 7th house is a kendra.")
+    notes = check_positions(text, chart)
+    assert len(notes) == 2
+    assert "Sun mahadasha as 1940-1956; the chart has 1899-1905" in notes[0] and "4th house a trikona" in notes[1]

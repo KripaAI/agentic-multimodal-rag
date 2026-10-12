@@ -183,6 +183,11 @@ class NatalChart:
                 lords = f"; lord of the {' and '.join(ordinal(h) for h in p.lord_of)} house" + ("s" if len(p.lord_of) > 1 else "")
             lines.append(f"- {body}: {p.sign} {dms(p.degree)}, {ordinal(p.house)} house, {p.nakshatra} nakshatra "
                          f"pada {p.pada}{lords}" + (f" ({', '.join(notes)})" if notes else ""))
+        lines.append("House by house (whole signs; only the planets listed are in each house):")
+        for h in range(1, 13):
+            sign = SIGNS[(SIGNS.index(self.lagna.sign) + h - 1) % 12]
+            occupants = [b for b in BODIES if self.placements[b].house == h]
+            lines.append(f"- {ordinal(h)} house, {sign} (lord {SIGN_LORD[sign]}): {', '.join(occupants) or 'empty'}")
         moon = self.placements["Moon"]
         lines.append(f"Moon sign (Rashi): {moon.sign}; birth nakshatra: {moon.nakshatra} pada {moon.pada}.")
         lines.append(f"Vimshottari dasha at birth: {self.dashas[0].lord} mahadasha, "

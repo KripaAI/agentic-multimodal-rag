@@ -172,17 +172,17 @@ def question_messages(settings: Settings, question: str, passages: list[Passage]
 # ---------------------------------------------------------------- checks
 
 _CITE = re.compile(r"\[\s*P\s*(\d+)(?:\s*[,;]\s*P?\s*(\d+))*\s*\]", re.I)
+_BARE_CITE = re.compile(r"(?<![\w\[])P(\d{1,2})\b")  # "covered in P5": a citation without brackets
 _NUM = re.compile(r"P?\s*(\d+)", re.I)
 
 
 def resolve_citations(text: str, passages: list[Passage]) -> tuple[str, list[Passage], list[str]]:
-    """[P3] -> [3] for passages that were given; unknown numbers are removed with a notice."""
+    """[P3] (or a bare P3) -> [3] for passages that were given; unknown numbers are removed with a notice."""
     by_n = {p.n: p for p in passages}
     cited: list[Passage] = []
     unknown: set[int] = set()
 
-    def repl(m: re.Match) -> str:
-        nums = [int(x) for x in _NUM.findall(m.group(0))]
+    def keep(nums: list[int]) -> str:
         good = []
         for n in nums:
             if n in by_n:
@@ -193,37 +193,103 @@ def resolve_citations(text: str, passages: list[Passage]) -> tuple[str, list[Pas
                 unknown.add(n)
         return "".join(f"[{n}]" for n in good)
 
-    out = re.sub(r" +([.,;:])", r"\1", _CITE.sub(repl, text))
+    out = _CITE.sub(lambda m: keep([int(x) for x in _NUM.findall(m.group(0))]), text)
+    out = _BARE_CITE.sub(lambda m: f"passage {keep([int(m.group(1))])}" if int(m.group(1)) in by_n
+                         else keep([int(m.group(1))]), out)
+    out = re.sub(r" +([.,;:])", r"\1", out)
     notices = [f"Removed citation(s) to passage(s) the model was not given: {', '.join(f'P{n}' for n in sorted(unknown))}."] \
         if unknown else []
     return out, cited, notices
 
 
-_BODY = r"(Sun|Moon|Mars|Mercury|Jupiter|Venus|Saturn|Rahu|Ketu)"
+_B = r"(?:Sun|Moon|Mars|Mercury|Jupiter|Venus|Saturn|Rahu|Ketu)"
+_BODIES = rf"(?P<bodies>{_B}(?:\s*(?:,|and|&)\s*{_B})*)"   # "Saturn", "Rahu and Ketu", "Venus, Mars and Mercury"
+_LINK = r"(?:\s+(?:is|are|also|both|placed|posited|sits|sit|located|situated|together|here|retrograde|and|still))*"
+_ORD = r"(\d{1,2})(?:st|nd|rd|th)"
 _SIGN = "(" + "|".join(SIGNS) + ")"
-_HOUSE_RE = re.compile(_BODY + r"(?:\s+(?:is|placed|posited|sits|located|situated)){0,2}\s+in\s+(?:the\s+)?(\d{1,2})"
-                       r"(?:st|nd|rd|th)\s+house")
-_SIGN_RE = re.compile(_BODY + r"(?:\s+(?:is|placed|posited|sits|located|situated)){0,2}\s+in\s+" + _SIGN + r"\b")
+_HOUSE_RE = re.compile(_BODIES + _LINK + r"\s+in\s+the\s+" + _ORD + r"\b(?!\s+(?:from|lord|to|and)\b)(?:\s+house)?")
+_SIGN_RE = re.compile(_BODIES + _LINK + r"\s+in\s+" + _SIGN + r"\b")
 _LAGNA_RE = re.compile(_SIGN + r"\s+(?:Lagna|Ascendant|ascendant|lagna|rising)|(?:Lagna|Ascendant|ascendant)\s+(?:is\s+|in\s+)?" + _SIGN)
+_DIGNITY_RE = re.compile(_BODIES + _LINK + r"(?:\s*,)?\s+(exalted|debilitated|in\s+its\s+own\s+sign)\b")
+_LORD_AFTER_RE = re.compile(rf"(?P<body>{_B}),?\s+(?:the\s+)?(?:lord|ruler)\s+of\s+the\s+{_ORD}(?:\s*(?:,|and)\s*(?:the\s+)?{_ORD})?")
+_LORD_PAREN_RE = re.compile(rf"(?P<body>{_B})\s*\(\s*{_ORD}(?:\s*(?:,|and)\s*{_ORD})?\s+lords?")
+_LORD_BEFORE_RE = re.compile(rf"\b{_ORD}\s+lord,?\s+(?:the\s+)?(?P<body>{_B})\b")
+_DASHA_RE = re.compile(rf"(?P<body>{_B})\s+(?P<kind>maha|antar)\s*dasha[^()\n]{{0,30}}\((\d{{4}}-\d\d-\d\d)\s+(?:to|-|–)\s+(\d{{4}}-\d\d-\d\d)\)",
+                       re.I)
+
+_DASHA_YEARS_RE = re.compile(rf"(?P<body>{_B})\s+maha\s*dasha[^.()\n]{{0,25}}?\(?(?:from\s+)?(\d{{4}})\s*(?:-|–|to)\s*(\d{{4}})\b", re.I)
+_HOUSE_KIND_RE = re.compile(rf"\b(?:the\s+)?{_ORD}(?:\s+house)?\s+(?:is|being)\s+(?:a|an|the)\s+"
+                            r"(kendra|trikona|trine|angular|dusthana|upachaya)\b", re.I)
+_HOUSE_KINDS = {"kendra": {1, 4, 7, 10}, "angular": {1, 4, 7, 10}, "trikona": {1, 5, 9}, "trine": {1, 5, 9},
+                "dusthana": {6, 8, 12}, "upachaya": {3, 6, 10, 11}}
+
+
+def _bodies(group: str) -> list[str]:
+    return re.findall(_B, group)
 
 
 def check_positions(text: str, chart: NatalChart) -> list[str]:
-    """Every 'Saturn in the 7th house' / 'Mars in Leo' / 'Leo Lagna' the text states, compared with
-    the computed chart. A book's general rule quoted in the text is flagged too; the notice says so."""
+    """Every chart fact the text states that the computed chart contradicts: a planet's house or sign
+    ('Saturn in the 7th house', 'Rahu and Ketu in the 1st', 'Mars in Leo'), the Lagna, a dignity
+    ('Saturn is debilitated'), a lordship ('Saturn, lord of the 7th') and dasha dates. A book's
+    general rule quoted in the text is flagged too; the notice says so. Aspects are not checked."""
     problems: list[str] = []
+    pl = chart.placements
     for m in _HOUSE_RE.finditer(text):
-        body, house = m.group(1), int(m.group(2))
-        if chart.placements[body].house != house:
-            problems.append(f"says {body} in the {ordinal(house)} house; the chart has it in the "
-                            f"{ordinal(chart.placements[body].house)}")
+        house = int(m.group(2))
+        for body in _bodies(m.group("bodies")):
+            if pl[body].house != house:
+                problems.append(f"says {body} in the {ordinal(house)} house; the chart has it in the "
+                                f"{ordinal(pl[body].house)}")
     for m in _SIGN_RE.finditer(text):
-        body, sign = m.group(1), m.group(2)
-        if chart.placements[body].sign != sign:
-            problems.append(f"says {body} in {sign}; the chart has it in {chart.placements[body].sign}")
+        sign = m.group(2)
+        for body in _bodies(m.group("bodies")):
+            if pl[body].sign != sign:
+                problems.append(f"says {body} in {sign}; the chart has it in {pl[body].sign}")
     for m in _LAGNA_RE.finditer(text):
         sign = m.group(1) or m.group(2)
         if sign != chart.lagna.sign:
             problems.append(f"says {sign} Lagna; the chart's Lagna is {chart.lagna.sign}")
+    for m in _DIGNITY_RE.finditer(text):
+        claim = "own sign" if m.group(2).startswith("in") else m.group(2)
+        for body in _bodies(m.group("bodies")):
+            actual = getattr(pl[body], "dignity", None)
+            if body not in ("Rahu", "Ketu") and actual != claim:
+                problems.append(f"calls {body} {claim}; in the chart it is {actual or 'neither exalted, debilitated nor in its own sign'}")
+    lord_claims = [(m.group("body"), [int(x) for x in m.groups()[1:] if x and x.isdigit()])
+                   for r in (_LORD_AFTER_RE, _LORD_PAREN_RE) for m in r.finditer(text)]
+    lord_claims += [(m.group("body"), [int(m.group(1))]) for m in _LORD_BEFORE_RE.finditer(text)]
+    for body, houses in lord_claims:
+        rules = getattr(pl[body], "lord_of", None)
+        if rules is None or body in ("Rahu", "Ketu"):
+            continue
+        for h in houses:
+            if h not in rules:
+                problems.append(f"calls {body} lord of the {ordinal(h)}; it rules the "
+                                f"{' and '.join(ordinal(x) for x in rules) or 'no house'}")
+    dashas = getattr(chart, "dashas", None)
+    if dashas:
+        from datetime import date as _date
+
+        from mmrag.astro.natal import antardashas
+
+        periods = {("maha", d.lord, d.start, d.end) for d in dashas}
+        periods |= {("antar", a.sub, a.start, a.end) for d in dashas for a in antardashas(d)}
+        for m in _DASHA_RE.finditer(text):
+            kind, body = m.group("kind").lower(), m.group("body")
+            start, end = _date.fromisoformat(m.group(3)), _date.fromisoformat(m.group(4))
+            if not any(k == kind and b == body and abs((s - start).days) <= 1 and abs((e - end).days) <= 1
+                       for k, b, s, e in periods):
+                problems.append(f"gives {body} {kind}dasha as {start} to {end}, which are not the chart's dates")
+        for m in _DASHA_YEARS_RE.finditer(text):
+            body, y1, y2 = m.group("body"), int(m.group(2)), int(m.group(3))
+            if not any(d.lord == body and d.start.year == y1 and d.end.year == y2 for d in dashas):
+                actual = next((f"{d.start.year}-{d.end.year}" for d in dashas if d.lord == body), "not in the sequence")
+                problems.append(f"gives {body} mahadasha as {y1}-{y2}; the chart has {actual}")
+    for m in _HOUSE_KIND_RE.finditer(text):
+        house, kind = int(m.group(1)), m.group(2).lower()
+        if house not in _HOUSE_KINDS[kind]:
+            problems.append(f"calls the {ordinal(house)} house a {kind}, which it is not")
     unique = list(dict.fromkeys(problems))
     return [f"Position check: the text {p} (unless it is quoting a general rule)." for p in unique]
 
@@ -243,6 +309,9 @@ def write_reading(settings: Settings, chart: NatalChart, question: str | None = 
                                search_fn)
     request = (f"{question.strip()} Answer from this chart." if question else
                "Give a full reading of this chart.")
+    if passages:
+        request += (" Whenever you use a passage, put its number in square brackets right after the sentence, "
+                    "for example [P3]; do not name the book instead.")
     written = (write or get_writer(settings, writer))(reading_messages(settings, facts, passages, request))
     text, cited, notices = resolve_citations(written.text, passages)
     notices += check_positions(text, chart)
