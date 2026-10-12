@@ -60,15 +60,23 @@ def _text(markdown: str) -> dict:
 
 
 def _chart_table(reading: Reading) -> str:
+    from mmrag.astro.analysis import navamsa, yogas
+
     c = reading.chart
-    rows = [f"| Lagna | {c.lagna.sign} | {dms(c.lagna.degree)} | 1 | {c.lagna.nakshatra} {c.lagna.pada} |"]
-    for b in BODIES:
-        p = c.placements[b]
-        flags = ", ".join(x for x in ("R" if p.retrograde and b not in ("Rahu", "Ketu") else "", p.dignity or "",
-                                      "combust" if p.combust else "") if x)
-        rows.append(f"| {b} | {p.sign} | {dms(p.degree)} | {p.house} | {p.nakshatra} {p.pada} |"
-                    + (f" {flags}" if flags else ""))
-    return "| | sign | degree | house | nakshatra |\n|---|---|---|---|---|\n" + "\n".join(rows)
+
+    def row(name, p) -> str:
+        d9 = navamsa(p.longitude)
+        flags = ", ".join(x for x in ("R" if getattr(p, "retrograde", False) and name not in ("Rahu", "Ketu") else "",
+                                      getattr(p, "dignity", None) or "", "combust" if getattr(p, "combust", False)
+                                      else "", "Vargottama" if d9 == p.sign else "") if x)
+        return f"| {name} | {p.sign} | {dms(p.degree)} | {p.house} | {p.nakshatra} {p.pada} | {d9} | {flags} |"
+
+    rows = [row("Lagna", c.lagna)] + [row(b, c.placements[b]) for b in BODIES]
+    table = "| | sign | degree | house | nakshatra | navamsa | |\n|---|---|---|---|---|---|---|\n" + "\n".join(rows)
+    ys = yogas(c)
+    if ys:
+        table += "\n\n**Yogas found by the software:** " + "; ".join(f"{y.name} ({y.condition})" for y in ys) + "."
+    return table
 
 
 def chart_reply(settings: Settings, message: str,

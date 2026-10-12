@@ -119,12 +119,22 @@ def system_prompt(settings: Settings) -> str:
 # ---------------------------------------------------------------- passages
 
 def chart_queries(chart: NatalChart, on: date | None = None) -> list[str]:
-    """What to look up in the books for this chart, most important first."""
+    """What to look up in the books for this chart, most important first. The Lagna query names its
+    characteristics: "Virgo ascendant native" alone matched an example horoscope in a chapter on
+    poverty yogas."""
+    from mmrag.astro.analysis import life_stage, yogas
+
+    on = on or date.today()
     p, lagna = chart.placements, chart.lagna
     moon = p["Moon"]
-    md, ad = chart.current(on or date.today())
-    queries = [f"{lagna.sign} ascendant (Lagna) native", f"Moon in {moon.sign} in the {ordinal(moon.house)} house",
-               f"born in {moon.nakshatra} nakshatra"]
+    md, ad = chart.current(on)
+    queries = [f"{lagna.sign} Lagna: appearance, temperament and character of persons born with {lagna.sign} rising",
+               f"Moon in {moon.sign} in the {ordinal(moon.house)} house",
+               f"born in {moon.nakshatra} nakshatra: character and temperament"]
+    if life_stage(chart.birth.when_local.date(), on).stage == "child":
+        queries.append("education, intelligence and learning: the 5th house and Mercury")
+    queries += [f"{y.name.split(' (')[0]} yoga: definition and results" for y in yogas(chart)
+                if y.name != "Kemadruma"][:3]
     if md:
         queries.append(f"results of {md.lord} mahadasha" + (f" and {ad.sub} antardasha" if ad else ""))
     for body in BODIES:
@@ -133,9 +143,19 @@ def chart_queries(chart: NatalChart, on: date | None = None) -> list[str]:
     return queries
 
 
+_EXAMPLE_CHART = re.compile(r"\b(?:chart|horoscope)\s*(?:no\.?|number|#)\s*\d+|\bstandard horoscope\b|"
+                            r"\bnative (?:was|is) born\b|\bborn on \d|\bthe native(?:'s)? (?:father|mother|wife) died\b",
+                            re.I)
+
+
+def is_example_horoscope(text: str) -> bool:
+    """A passage discussing a particular person's chart from the book (Raman's "Chart No. 97")."""
+    return bool(_EXAMPLE_CHART.search(text))
+
+
 def gather_passages(settings: Settings, queries: list[str], limit: int,
                     embed_query: Callable[[str], list[float]] | None = None,
-                    search_fn: Callable | None = None) -> list[Passage]:
+                    search_fn: Callable | None = None, exclude: re.Pattern | None = None) -> list[Passage]:
     """Library passages for the queries: the best new one per query in turn, then the second best,
     until `limit`. Round-robin, so every chart factor gets a passage before any gets two."""
     if limit <= 0 or not queries:
@@ -155,6 +175,9 @@ def gather_passages(settings: Settings, queries: list[str], limit: int,
         for q, hits in zip(queries, per_query):
             if rank < len(hits) and hits[rank].chunk_id not in seen and len(out) < limit:
                 h = hits[rank]
+                if exclude is not None and exclude.search(h.dense_text):
+                    seen.add(h.chunk_id)
+                    continue
                 seen.add(h.chunk_id)
                 pages = sorted({loc["page"] for loc in h.locations})
                 text = " ".join(h.dense_text.split())[: settings.writer.passage_chars]
@@ -172,7 +195,9 @@ def _passages_block(passages: list[Passage]) -> str:
              "of inventing a source.", ""]
     for p in passages:
         pages = ", ".join(str(n) for n in p.pages)
-        lines.append(f"[P{p.n}] ({p.source_file}, page {pages}) {p.text}")
+        label = " [example horoscope of another person; never apply its details to this native]" \
+            if is_example_horoscope(p.text) else ""
+        lines.append(f"[P{p.n}] ({p.source_file}, page {pages}){label} {p.text}")
     return "\n".join(lines)
 
 
@@ -193,6 +218,38 @@ def question_messages(settings: Settings, question: str, passages: list[Passage]
 _CITE = re.compile(r"\[\s*P\s*(\d+)(?:\s*[,;]\s*P?\s*(\d+))*\s*\]", re.I)
 _BARE_CITE = re.compile(r"(?<![\w\[])P(\d{1,2})\b")  # "covered in P5": a citation without brackets
 _NUM = re.compile(r"P?\s*(\d+)", re.I)
+
+
+BOOK_NAMES = {"Phaladeepika": r"Phala\s*-?\s*deepika|Phaldeepika|Phaladipika", "Saravali": r"Saravali",
+              "Bhrigu Sutras": r"Bhrigu", "Brihat Jataka": r"Brihat\s+Jatak", "Jataka Parijata": r"Jataka\s+Parijata",
+              "Raman": r"\bRaman\b|How\s+to\s+Judge\s+a\s+Horoscope", "Sanketa Nidhi": r"Sanketa\s*nidhi",
+              "Chamatkar Chintamani": r"Chamatkar", "Uttara Kalamrita": r"Uttara\s+Kalamrita",
+              "Brihat Parashara Hora Shastra": r"Parashara\s+Hora|\bBPHS\b", "Saturn: Friend and Guide":
+              r"Saturn[-\s]+Friend"}
+
+
+def link_named_books(text: str, passages: list[Passage], cited: list[Passage]) -> tuple[str, list[Passage]]:
+    """The writer often names a book ("Phaldeepika describes...") instead of citing [P3]. Each named
+    book is linked to the first given passage that is from it or quotes it, so the source can be
+    checked; a book that no passage contains stays unlinked."""
+    cited = list(cited)
+    for pattern in BOOK_NAMES.values():
+        m = re.search(rf"({pattern})(?!\s*\[)", text, re.I)
+        if not m:
+            continue
+        hit = next((p for p in passages if re.search(pattern, p.text, re.I)
+                    or re.search(pattern, p.source_file.replace("-", " "), re.I)), None)
+        if hit is None:
+            continue
+        end = text.find(".", m.end())
+        if f"[{hit.n}]" in text[m.end():end if end >= 0 else len(text)]:  # the sentence already cites it
+            if hit not in cited:
+                cited.append(hit)
+            continue
+        text = text[:m.end()] + f" [{hit.n}]" + text[m.end():]
+        if hit not in cited:
+            cited.append(hit)
+    return text, cited
 
 
 def resolve_citations(text: str, passages: list[Passage]) -> tuple[str, list[Passage], list[str]]:
@@ -216,6 +273,7 @@ def resolve_citations(text: str, passages: list[Passage]) -> tuple[str, list[Pas
     out = _BARE_CITE.sub(lambda m: f"passage {keep([int(m.group(1))])}" if int(m.group(1)) in by_n
                          else keep([int(m.group(1))]), out)
     out = re.sub(r" +([.,;:])", r"\1", out)
+    out, cited = link_named_books(out, passages, cited)
     notices = [f"Removed citation(s) to passage(s) the model was not given: {', '.join(f'P{n}' for n in sorted(unknown))}."] \
         if unknown else []
     return out, cited, notices
@@ -229,7 +287,7 @@ _SIGN = "(" + "|".join(SIGNS) + ")"
 _HOUSE_RE = re.compile(_BODIES + _LINK + r"\s+in\s+the\s+" + _ORD + r"\b(?!\s+(?:from|lord|to|and)\b)(?:\s+house)?")
 _SIGN_RE = re.compile(_BODIES + _LINK + r"\s+in\s+" + _SIGN + r"\b")
 _LAGNA_RE = re.compile(_SIGN + r"\s+(?:Lagna|Ascendant|ascendant|lagna|rising)|(?:Lagna|Ascendant|ascendant)\s+(?:is\s+|in\s+)?" + _SIGN)
-_DIGNITY_RE = re.compile(_BODIES + _LINK + r"(?:\s*,)?\s+(exalted|debilitated|in\s+its\s+own\s+sign)\b")
+_DIGNITY_RE = re.compile(_BODIES + _LINK + r"(?:\s*,)?\s+(exalted|debilitated|in\s+(?:its|his|her|their)\s+own\s+sign)\b")
 _LORD_AFTER_RE = re.compile(rf"(?P<body>{_B}),?\s+(?:the\s+)?(?:lord|ruler)\s+of\s+the\s+{_ORD}(?:\s*(?:,|and)\s*(?:the\s+)?{_ORD})?")
 _LORD_PAREN_RE = re.compile(rf"(?P<body>{_B})\s*\(\s*{_ORD}(?:\s*(?:,|and)\s*{_ORD})?\s+lords?")
 _LORD_BEFORE_RE = re.compile(rf"\b{_ORD}\s+lord,?\s+(?:the\s+)?(?P<body>{_B})\b")
@@ -237,7 +295,7 @@ _DASHA_RE = re.compile(rf"(?P<body>{_B})\s+(?P<kind>maha|antar)\s*dasha[^()\n]{{
                        re.I)
 
 _DASHA_YEARS_RE = re.compile(rf"(?P<body>{_B})\s+maha\s*dasha[^.()\n]{{0,25}}?\(?(?:from\s+)?(\d{{4}})\s*(?:-|–|to)\s*(\d{{4}})\b", re.I)
-_HOUSE_KIND_RE = re.compile(rf"\b(?:the\s+)?{_ORD}(?:\s+house)?\s+(?:is|being)\s+(?:a|an|the)\s+"
+_HOUSE_KIND_RE = re.compile(rf"\b(?:the\s+)?{_ORD}(?:\s+house)?(?:\s+(?:is|being)|\s*,|\s*\()\s*(?:a|an|the)\s+"
                             r"(kendra|trikona|trine|angular|dusthana|upachaya)\b", re.I)
 _HOUSE_KINDS = {"kendra": {1, 4, 7, 10}, "angular": {1, 4, 7, 10}, "trikona": {1, 5, 9}, "trine": {1, 5, 9},
                 "dusthana": {6, 8, 12}, "upachaya": {3, 6, 10, 11}}
@@ -313,6 +371,154 @@ def check_positions(text: str, chart: NatalChart) -> list[str]:
     return [f"Position check: the text {p} (unless it is quoting a general rule)." for p in unique]
 
 
+_CHILD_EXCLUDE = re.compile(r"\b(?:poverty|penury|daridra|beggar|widow|divorce|death|dies|die|longevity|maraka|"
+                            r"adultery|prostitut)", re.I)
+
+
+def reading_rules(stage, with_passages: bool, chart: NatalChart | None = None) -> str:
+    """The rules, repeated at the end of the request, where the small model follows them best."""
+    from mmrag.astro.analysis import neecha_bhanga
+    rules = [f"The native is {stage.age} years old ({stage.stage}). Focus on {stage.focus}. Do not discuss "
+             f"{stage.avoid}.",
+             "Use only the dignities, aspects, yogas, Navamsa and cancellations listed in the facts. Do not name a "
+             "yoga, an aspect, Vargottama or a cancellation that is not listed there.",
+             "Counting: the sign a planet occupies is the 1st from it. Take every 'Nth from' position from the "
+             "'Counted from' lines; never count houses yourself.",
+             "Begin with the chart's strongest factors (exalted and own-sign planets, yogas, cancelled debility), "
+             "then the challenges. Weigh them evenly.",
+             "When a debilitated planet's debility is cancelled, say so and say by which rule; do not call it "
+             "simply weak."]
+    if chart is not None:
+        nbs = neecha_bhanga(chart)
+        cancelled = [nb.body for nb in nbs if nb.classical]
+        later_only = [nb.body for nb in nbs if not nb.classical and nb.later]
+        not_cancelled = [nb.body for nb in nbs if not nb.classical and not nb.later]
+        parts = ([f"cancelled by a classical rule: {', '.join(cancelled)}"] if cancelled else []) + \
+                ([f"cancelled only by later rules: {', '.join(later_only)}"] if later_only else []) + \
+                ([f"NOT cancelled: {', '.join(not_cancelled)}"] if not_cancelled else [])
+        if parts:
+            rules.append("Debilitated planets in this chart: " + "; ".join(parts) + ". Do not move a cancellation "
+                         "from one planet to another.")
+    if with_passages:
+        rules += ["Apply a rule from a passage only when every one of its conditions is shown in the facts; "
+                  "otherwise leave the rule out entirely. Never list rules that do not apply.",
+                  "Passages marked as an example horoscope describe other people; never apply their details to "
+                  "this native.",
+                  "Whenever you use a passage, put its number in square brackets right after the sentence, for "
+                  "example [P3]; do not name the book instead."]
+    return "Rules for this reading:\n" + "\n".join(f"{n}. {r}" for n, r in enumerate(rules, 1))
+
+
+_FROM_SIGN_RE = re.compile(rf"\bthe\s+{_ORD}\s+(?:house\s+|sign\s+)?from\s+(?:the\s+)?(?P<ref>{_B}|Lagna|Ascendant)"
+                           rf"(?:\s*\([^)]*\))?\s*(?:,\s*)?(?:is|=|falls in|being)\s+(?:in\s+)?{_SIGN}")
+_IN_FROM_RE = re.compile(_BODIES + _LINK + rf"\s+in\s+the\s+{_ORD}\s+(?:house\s+)?from\s+(?:the\s+)?"
+                         rf"(?P<ref>{_B}|Lagna|Ascendant)\b")
+_ASPECT_HOUSE_RE = re.compile(rf"(?P<a>{_B})(?:\s+also)?\s+(?:aspects|fully aspects|casts\s+(?:its|his|her)\s+"
+                              rf"(?:\w+\s+)?aspect\s+on)\s+the\s+{_ORD}(?:\s+house)?\b")
+_ASPECT_BODY_RE = re.compile(rf"(?P<a>{_B})(?:\s+also)?\s+aspects\s+(?:the\s+)?(?P<b>{_B}|Lagna|Ascendant)\b")
+_ASPECTED_RE = re.compile(rf"(?P<b>{_B}|Lagna|Ascendant|the\s+{_ORD}(?:\s+house)?)\s+(?:is|are)\s+(?:also\s+)?"
+                          rf"aspected\s+by\s+(?P<a>{_B})\b")
+_CANCELLED_RE = re.compile(rf"(?P<a>{_B})(?:'s)?(?:[^.]{{0,60}}?\bits)?\s+(?:debility|debilitation)\s+(?:is\s+)?"
+                           rf"(?:also\s+|fully\s+|partly\s+)?(?:cancelled|canceled|relieved|removed)", re.I)
+_CANCELLED_OF_RE = re.compile(rf"(?:cancelled|canceled)\s+debility\s+(?:of|for)\s+(?P<a>{_B})"
+                              rf"|neecha\s+bhanga(?:\s+raja\s+yoga)?\s+(?:of|for)\s+(?P<b>{_B})", re.I)
+_RECEIVES_RE = re.compile(rf"(?P<t>\bthe\s+{_ORD}(?:\s+house)?|\b{_B}|\bLagna)\b[^.]{{0,100}}?\breceives?\s+"
+                          rf"(?:the\s+)?(?:full\s+)?aspects?\s+(?:of|from)\s+(?P<from>{_B}(?:\s*(?:,|and|&)\s*{_B})*)")
+_JOINED_RE = re.compile(rf"(?P<a>{_B})\b(?:\s+is|\s+are|\s*,)?(?:\s+also)?\s+(?:joined|conjoined|accompanied)\s+"
+                        rf"(?:by|with)\s+(?:a\s+\w+\s+\(?)?(?:the\s+)?(?P<with>{_B}(?:\s*(?:,|and|&)\s*(?:the\s+)?{_B})*)")
+_VARGOTTAMA_RE = re.compile(rf"(?P<a>{_B})(?:\s+is|\s*,|\s+being)?(?:\s+also)?\s+vargottama", re.I)
+_CHILD_TOPICS = re.compile(r"\b(poverty|penury|daridra|wealth|riches|career|profession|marriage|spouse|wife|"
+                           r"husband|divorce|death|longevity)\b", re.I)
+_NEGATED = re.compile(r"(?:\bno\b|\bnot\b|\bnor\b|\bwithout\b|\babsence\b|\bisn't\b|\bdoes not\b)[^.]{0,40}$", re.I)
+
+
+def _house_of(ref: str, chart: NatalChart) -> str:
+    return chart.lagna.sign if ref in ("Lagna", "Ascendant") else chart.placements[ref].sign
+
+
+def check_analysis(text: str, chart: NatalChart, stage=None) -> list[str]:
+    """Claims the computed analysis decides: positions counted from a planet, aspects, Vargottama,
+    yogas the chart does not have, and adult topics in a child's reading."""
+    from mmrag.astro.analysis import YOGA_NAMES, aspects, house_from, navamsa, sign_at, yogas
+
+    problems: list[str] = []
+    for m in _FROM_SIGN_RE.finditer(text):
+        n, ref, sign = int(m.group(1)), m.group("ref"), m.group(len(m.groups()))
+        actual = sign_at(_house_of(ref, chart), n)
+        if sign != actual:
+            problems.append(f"says the {ordinal(n)} from {ref} is {sign}; it is {actual}")
+    for m in _IN_FROM_RE.finditer(text):
+        n, ref = int(m.group(len(m.groups()) - 1)), m.group("ref")
+        for body in _bodies(m.group("bodies")):
+            actual = house_from(_house_of(ref, chart), chart.placements[body].sign)
+            if body != ref and actual != n:
+                problems.append(f"says {body} is in the {ordinal(n)} from {ref}; it is in the {ordinal(actual)}")
+    asp = aspects(chart)
+    def house_of(x: str) -> int:
+        return 1 if x in ("Lagna", "Ascendant") else chart.placements[x].house
+    for m in _ASPECT_HOUSE_RE.finditer(text):
+        a, h = m.group("a"), int(m.group(2))
+        if a in asp and h not in asp[a]:
+            problems.append(f"says {a} aspects the {ordinal(h)} house; it aspects the "
+                            f"{', '.join(ordinal(x) for x in asp[a])}")
+    for m in _ASPECT_BODY_RE.finditer(text):
+        a, b = m.group("a"), m.group("b")
+        if a in asp and a != b and house_of(b) not in asp[a]:
+            problems.append(f"says {a} aspects {b}; it does not (it aspects the "
+                            f"{', '.join(ordinal(x) for x in asp[a])})")
+    for m in _ASPECTED_RE.finditer(text):
+        a, target = m.group("a"), m.group("b")
+        h = int(re.search(r"\d+", target).group()) if target.startswith("the") else house_of(target)
+        if a in asp and h not in asp[a]:
+            problems.append(f"says {target} is aspected by {a}; it is not")
+    from mmrag.astro.analysis import neecha_bhanga
+
+    nbs = {nb.body: nb for nb in neecha_bhanga(chart)}
+    claims = [m.group("a") for m in _CANCELLED_RE.finditer(text)]
+    claims += [m.group("a") or m.group("b") for m in _CANCELLED_OF_RE.finditer(text)]
+    for a in dict.fromkeys(claims):
+        nb = nbs.get(a)
+        if nb is None:
+            problems.append(f"says {a}'s debility is cancelled; {a} is not debilitated")
+        elif not nb.classical and not nb.later:
+            problems.append(f"says {a}'s debility is cancelled; no rule cancels it in this chart")
+    for m in _RECEIVES_RE.finditer(text):
+        target = m.group("t")
+        digits = re.search(r"\d+", target)
+        h = int(digits.group()) if digits else house_of(target.strip())
+        for a in _bodies(m.group("from")):
+            if a in asp and h not in asp[a]:
+                problems.append(f"says {target.strip()} receives the aspect of {a}; it does not "
+                                f"({a} aspects the {', '.join(ordinal(x) for x in asp[a])})")
+    for m in _JOINED_RE.finditer(text):
+        a = m.group("a")
+        for b in _bodies(m.group("with")):
+            if b != a and chart.placements[b].sign != chart.placements[a].sign:
+                problems.append(f"says {a} is joined by {b}; {a} is in {chart.placements[a].sign} and {b} in "
+                                f"{chart.placements[b].sign}")
+    for m in _VARGOTTAMA_RE.finditer(text):
+        a = m.group("a")
+        if navamsa(chart.placements[a].longitude) != chart.placements[a].sign:
+            problems.append(f"calls {a} Vargottama; it is not (Navamsa "
+                            f"{navamsa(chart.placements[a].longitude)})")
+    present = {y.name.split(" (")[0].lower() for y in yogas(chart)}
+    present |= {"vipareeta raja yoga"} if any("Vipareeta" in y.name for y in yogas(chart)) else set()
+    for name in YOGA_NAMES:
+        for m in re.finditer(rf"\b{re.escape(name)}(?:\s+(?:raja\s+)?yoga)?\b", text, re.I):
+            if _NEGATED.search(text[max(0, m.start() - 60):m.start()]):
+                continue
+            if not any(name.lower() in y for y in present):
+                problems.append(f"names {name} yoga, which this chart does not have")
+                break
+    if stage is not None and stage.stage == "child":
+        topics = sorted({m.group(1).lower() for m in _CHILD_TOPICS.finditer(text)
+                         if not _NEGATED.search(text[max(0, m.start() - 60):m.start()])})
+        if topics:
+            problems.append(f"discusses {', '.join(topics)} in a reading for a {stage.age}-year-old")
+    unique = list(dict.fromkeys(problems))
+    return [f"Analysis check: the text {p}." for p in unique]
+
+
 # ---------------------------------------------------------------- the two entry points
 
 def write_reading(settings: Settings, chart: NatalChart, question: str | None = None,
@@ -321,19 +527,21 @@ def write_reading(settings: Settings, chart: NatalChart, question: str | None = 
                   embed_query: Callable[[str], list[float]] | None = None,
                   search_fn: Callable | None = None) -> Reading:
     """A reading of `chart`, or an answer to `question` about it, from chart facts and library passages."""
+    from mmrag.astro.analysis import analysis_facts, life_stage
+
     started = time.monotonic()
-    facts = chart.facts(on)
+    on = on or date.today()
+    stage = life_stage(chart.birth.when_local.date(), on)
+    facts = chart.facts(on) + "\n\n" + analysis_facts(chart, on)
     queries = ([question] if question else []) + chart_queries(chart, on)
     passages = gather_passages(settings, queries, settings.writer.passages if use_books else 0, embed_query,
-                               search_fn)
+                               search_fn, exclude=_CHILD_EXCLUDE if stage.stage == "child" else None)
     request = (f"{question.strip()} Answer from this chart." if question else
-               "Give a full reading of this chart.")
-    if passages:
-        request += (" Whenever you use a passage, put its number in square brackets right after the sentence, "
-                    "for example [P3]; do not name the book instead.")
+               "Give a full reading of this chart.") + "\n\n" + reading_rules(stage, bool(passages), chart)
     written = (write or get_writer(settings, writer))(reading_messages(settings, facts, passages, request))
     text, cited, notices = resolve_citations(written.text, passages)
     notices += check_positions(text, chart)
+    notices += check_analysis(text, chart, stage)
     if passages and not cited:
         notices.append("The reading cites none of the library passages it was given.")
     if not text:
