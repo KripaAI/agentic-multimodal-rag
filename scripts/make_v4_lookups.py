@@ -101,6 +101,41 @@ def questions(chart, rng: random.Random) -> list[tuple[str, str, str]]:
     return out
 
 
+# Facts blocks (first line prefixes) in the order the app writes them. The full block runs ~2,800 tokens, too long
+# for Kaggle's T4 at 3,072 with the system prompt (memory test 2026-10-12: 116/150 lookups over). Each example keeps
+# the header, the planets, the block(s) its question needs and two other blocks as distractors, in the app's order.
+BLOCKS = ["Planets:", "House by house", "Moon sign", "Vimshottari", "Running on", "Sub-periods", "Next mahadasha",
+          "Mahadashas", "Age on", "House kinds", "Dignity and Navamsa", "House lords", "Aspects (", "Houses receiving",
+          "Houses counted from the Moon", "Sign rulers", "Natural significators", "Counted from each planet",
+          "Debility and its cancellation", "Yogas"]
+NEEDS = {"from_moon": ["Houses counted from the Moon"], "moon_house_sign": ["Houses counted from the Moon"],
+         "house_lord": ["House lords", "House by house"], "dignity": ["Dignity and Navamsa"],
+         "navamsa": ["Dignity and Navamsa"], "aspects": ["Aspects (", "Houses receiving"],
+         "occupants": ["House by house"], "dasha": ["Running on", "Sub-periods", "Next mahadasha", "Mahadashas"],
+         "neecha_bhanga": ["Debility and its cancellation"], "yogas": ["Yogas"], "house_kind": ["House kinds"]}
+
+
+def split_blocks(facts: str) -> list[tuple[str, list[str]]]:
+    """[(block key, lines)]; lines before the first known block go under 'head'."""
+    out: list[tuple[str, list[str]]] = [("head", [])]
+    for line in facts.splitlines():
+        key = next((b for b in BLOCKS if line.startswith(b)), None)
+        if key:
+            out.append((key, [line]))
+        else:
+            out[-1][1].append(line)
+    return out
+
+
+def facts_subset(facts: str, kind: str, rng: random.Random) -> str:
+    blocks = split_blocks(facts)
+    keys = [k for k, _ in blocks]
+    want = {"head", "Planets:", *NEEDS[kind]}
+    others = [k for k in keys if k not in want and k not in ("Counted from each planet",)]
+    want |= set(rng.sample(others, min(2, len(others))))
+    return "\n".join("\n".join(lines) for k, lines in blocks if k in want).strip()
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--n", type=int, default=650)
@@ -117,7 +152,8 @@ def main() -> None:
                                           "Asia/Kolkata", lat, lon, None, city))
         facts = chart.facts(ON) + "\n\n" + analysis_facts(chart, ON)
         for kind, q, ans in rng.sample(questions(chart, rng), 2):  # two questions per chart keeps charts varied
-            msgs = reading_messages(settings, facts, [], f"{q} Answer from the chart facts above.")
+            sub = facts_subset(facts, kind, rng)
+            msgs = reading_messages(settings, sub, [], f"{q} Answer from the chart facts above.")
             msgs[0]["content"] = msgs[0]["content"].replace("\r\n", "\n").strip()
             rows.append({"id": f"lookup-{len(rows):04d}", "task": "lookup_v4", "category": kind,
                          "messages": msgs + [{"role": "assistant", "content": ans}]})
