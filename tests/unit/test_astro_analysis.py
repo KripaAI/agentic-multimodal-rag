@@ -220,3 +220,45 @@ def test_no_false_alarms_on_lists_of_planets(child):
     wrong = "Mercury is in its own sign. Mars is Vargottama."
     notes = " ".join(check_positions(wrong, child) + check_analysis(wrong, child, stage))
     assert "Mercury own sign" in notes and "Mars Vargottama" in notes
+
+
+@needs_ephemeris
+def test_errors_from_the_claude_judged_readings_are_caught(child):
+    """From the blind review of 2026-10-12: sign rulership, counting from a sign, a sub-period called a mahadasha."""
+    gandhi = natal.compute_chart(parse_birth("1869-10-02", "07:12", "+04:38", 21.6417, 69.6293))
+    notes = " ".join(check_analysis("Saturn sits in the 2nd from Scorpio, which is its own sign. Jupiter aspects the "
+                                    "1st from Aries (its own sign). Mars is in Libra, its own sign.", gandhi, None))
+    assert "Scorpio Saturn's own sign" in notes and "Aries Jupiter's own sign" in notes and "Libra Mars's" in notes
+    assert check_analysis("Mars is in Scorpio, its own sign. Venus is in Libra, its own sign.", gandhi, None) == []
+    stage = analysis.life_stage(child.birth.when_local.date(), ON)
+    notes = " ".join(check_analysis("The 3rd from Pisces is Cancer. Rahu mahadasha follows from 2027.", child, stage))
+    assert "3rd from Pisces is Cancer; it is Taurus" in notes and "a sub-period is not a mahadasha" in notes
+    assert check_analysis("The 3rd from Pisces is Taurus. Mercury mahadasha begins in 2032.", child, stage) == []
+
+
+@needs_ephemeris
+def test_wrong_sentences_are_removed_but_quoted_rules_kept(child):
+    from mmrag.astro.reading import remove_flagged_sentences
+
+    stage = analysis.life_stage(child.birth.when_local.date(), ON)
+    text = ("**Classical view**\n\nMars is exalted in the 5th. The 3rd from Pisces is Cancer, so nothing sits there. "
+            "The Bhrigu Sutras say Saturn in the 7th brings delay.\n- **Learning:** Mercury is in its own sign. Venus "
+            "supports study.\n- Rahu mahadasha follows from 2027.")
+    out, removed = remove_flagged_sentences(text, child, stage)
+    assert out == ("**Classical view**\n\nMars is exalted in the 5th. The Bhrigu Sutras say Saturn in the 7th brings "
+                   "delay.\n- **Learning:** Venus supports study.")
+    assert len(removed) == 3
+
+
+def test_facts_name_the_tables_the_writer_got_wrong():
+    from mmrag.astro.compose import YOGA_DEFINITIONS
+
+    assert "no conjunction" in YOGA_DEFINITIONS["Gajakesari"] and "lion" in YOGA_DEFINITIONS["Gajakesari"]
+
+
+@needs_ephemeris
+def test_moon_counting_rulers_and_dasha_labels_are_in_the_facts(child):
+    facts = child.facts(ON) + analysis.analysis_facts(child, ON)
+    assert "3rd Taurus (Venus); 4th Gemini (Rahu); 5th Cancer;" in facts
+    assert "Scorpio - Mars" in facts and "Moon - mother, mind" in facts
+    assert "Sub-periods (antardashas, NOT mahadashas) inside the Saturn mahadasha" in facts

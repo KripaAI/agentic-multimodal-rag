@@ -30,7 +30,9 @@ KARAKA_OF = {"Sun": "soul, father, authority", "Moon": "mind, mother, emotions",
              "Rahu": "ambition, the unconventional", "Ketu": "detachment, spirituality"}
 OWN_SIGNS = {b: [s for s in SIGNS if SIGN_LORD[s] == b] for b in EXALTED}
 YOGA_DEFINITIONS = {
-    "Gajakesari": "Jupiter in a kendra (the 1st, 4th, 7th or 10th) counted from the Moon",
+    "Gajakesari": "Jupiter in a kendra (the 1st, 4th, 7th or 10th) counted from the Moon; no conjunction or "
+                  "closeness of degrees is required, and it is not one of the Pancha Mahapurusha yogas. The name "
+                  "means elephant (gaja) and lion (kesari)",
     "Budha-Aditya": "the Sun and Mercury together in one sign",
     "Chandra-Mangala": "the Moon and Mars together in one sign",
     "Pancha Mahapurusha": "Mars (Ruchaka), Mercury (Bhadra), Jupiter (Hamsa), Venus (Malavya) or Saturn (Sasa) in "

@@ -188,6 +188,7 @@ class Writer(_Section):
     passages: int = Field(default=12, ge=0)  # library passages given to the writer (0: chart facts only)
     passage_chars: int = Field(default=900, gt=0)
     repair: bool = True        # one more turn to fix the sentences the checks flag (Level 1, 2026-10-12)
+    remove_flagged: bool = True  # then delete sentences the checks still prove wrong (rules quoted are kept)
     repeat_penalty: float = Field(default=1.1, ge=1.0, le=2.0)  # llama-server: stops generation loops
 
 

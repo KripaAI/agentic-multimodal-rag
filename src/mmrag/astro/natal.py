@@ -199,13 +199,14 @@ class NatalChart:
                          f"{left:.1f} years left)"
                          + (f", {ad.sub} antardasha ({ad.start:%Y-%m-%d} to {ad.end:%Y-%m-%d})." if ad else "."))
             subs = [a for a in antardashas(md) if a.end > md.start]
-            lines.append(f"Antardashas of the {md.lord} mahadasha: " + "; ".join(
+            lines.append(f"Sub-periods (antardashas, NOT mahadashas) inside the {md.lord} mahadasha: " + "; ".join(
                 f"{a.sub} {max(a.start, md.start):%Y-%m-%d} to {a.end:%Y-%m-%d}" + (" (running)" if ad and (a.sub, a.start) == (ad.sub, ad.start) else "")
                 for a in subs) + ".")
             nxt = next((d for d in self.dashas if d.start >= md.end), None)
             if nxt:
                 lines.append(f"Next mahadasha: {nxt.lord}, {nxt.start:%Y-%m-%d} to {nxt.end:%Y-%m-%d}.")
-        lines.append("Mahadasha sequence: " + "; ".join(f"{d.lord} {d.start:%Y}-{d.end:%Y}" for d in self.dashas) + ".")
+        lines.append("Mahadashas (major periods), in order: "
+                     + "; ".join(f"{d.lord} {d.start:%Y}-{d.end:%Y}" for d in self.dashas) + ".")
         return "\n".join(lines)
 
 

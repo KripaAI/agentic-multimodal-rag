@@ -479,6 +479,14 @@ HOUSE_TOPICS = {"self": {1}, "wealth": {2, 11}, "family": {2, 4}, "speech": {2},
                 "partnership": {7}, "longevity": {8}, "father": {9, 10}, "fortune": {9}, "dharma": {9},
                 "career": {10}, "profession": {10}, "gains": {11}, "income": {11}, "losses": {12}, "expenses": {12}}
 _BODY_IS_LORD_RE = re.compile(rf"(?P<a>{_B})\s*(?:,|\()\s*(?:[Tt]he\s+)?{_ORD}(?:\s+(?:and|&)\s+{_ORD})?\s+lord\b")
+# "Saturn sits in the 2nd from Scorpio, which is its own sign": the sign's ruler decides
+_SIGN_OWN_RE = re.compile(rf"(?P<b>{_B})\b(?:(?!{_B})[^.]){{0,70}}?\b{_SIGN}\s*(?:,\s*)?(?:\(\s*)?(?:which\s+is\s+)?"
+                          r"(?:its|his|her)\s+own(?:\s+sign)?")
+# "the 3rd from Pisces is Cancer"
+_FROM_SIGNNAME_RE = re.compile(rf"\b[Tt]he\s+{_ORD}\s+(?:house\s+|sign\s+)?from\s+{_SIGN}\s+(?:is|=|falls\s+in)\s+{_SIGN}\b")
+# "Venus mahadasha follows from 2027", "Mars mahadasha from 2032-06-03 brings"
+_MD_START_RE = re.compile(rf"(?P<b>{_B})\s+maha\s*dasha\s+(?:follows\s+|begins\s+|starts\s+|will\s+begin\s+)?"
+                          r"(?:from|on|in)\s+(?:\w+\s+)?(?P<y>\d{4})", re.I)
 _VARGOTTAMA_RE = re.compile(rf"(?P<a>{_B})(?:\s+is|\s+being)(?:\s+also)?\s+vargottama|vargottama\s+(?P<b>{_B})", re.I)
 _CHILD_TOPICS = re.compile(r"\b(poverty|penury|daridra|wealth|riches|career|profession|marriage|spouse|wife|"
                            r"husband|divorce|death|longevity)\b", re.I)
@@ -608,6 +616,22 @@ def check_analysis(text: str, chart: NatalChart, stage=None) -> list[str]:
             if n not in rules:
                 problems.append(f"calls {a} the {ordinal(n)} lord; it rules the "
                                 f"{' and '.join(ordinal(x) for x in rules) or 'no house'}")
+    for m in _SIGN_OWN_RE.finditer(text):
+        b, sign = m.group("b"), m.group(2)
+        if SIGN_LORD[sign] != b and b not in ("Rahu", "Ketu"):
+            problems.append(f"calls {sign} {b}'s own sign; {sign} is ruled by {SIGN_LORD[sign]}")
+    for m in _FROM_SIGNNAME_RE.finditer(text):
+        n, base, claimed = int(m.group(1)), m.group(2), m.group(3)
+        if sign_at(base, n) != claimed:
+            problems.append(f"says the {ordinal(n)} from {base} is {claimed}; it is {sign_at(base, n)}")
+    dashas_ = getattr(chart, "dashas", None)
+    if dashas_:
+        for m in _MD_START_RE.finditer(text):
+            b, y = m.group("b"), int(m.group("y"))
+            if not any(d.lord == b and abs(d.start.year - y) <= 0 for d in dashas_):
+                actual = next((f"{d.start:%Y}" for d in dashas_ if d.lord == b), None)
+                problems.append(f"says {b} mahadasha begins in {y}; " + (f"it begins in {actual}" if actual else
+                                f"{b} mahadasha does not fall in this sequence") + " (a sub-period is not a mahadasha)")
     for m in _VARGOTTAMA_RE.finditer(text):
         a = m.group("a") or m.group("b")
         if navamsa(chart.placements[a].longitude) != chart.placements[a].sign:
@@ -629,6 +653,38 @@ def check_analysis(text: str, chart: NatalChart, stage=None) -> list[str]:
             problems.append(f"discusses {', '.join(topics)} in a reading for a {stage.age}-year-old")
     unique = list(dict.fromkeys(problems))
     return [f"Analysis check: the text {p}." for p in unique]
+
+
+_QUOTING = re.compile(r"\b(?:says?|said|describes?|described|states?|holds?\s+that|according\s+to|the\s+(?:text|book|rule)|"
+                      r"classical(?:ly)?|tradition(?:al|ally)?|if\b|when\b|unless\b|would\b)", re.I)
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+(?=[A-Z*\[(\"'])")
+
+
+def remove_flagged_sentences(text: str, chart: NatalChart, stage=None) -> tuple[str, list[str]]:
+    """Delete each sentence the checks prove wrong about this chart, unless it quotes or conditions a rule
+    ("the text says...", "if Saturn is..."): those stay, flagged. Returns (text, what was removed)."""
+    removed: list[str] = []
+    out_lines = []
+    for line in text.splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            out_lines.append(line)
+            continue
+        prefix = re.match(r"^(\s*(?:[-*]|\d+\.)\s+(?:\*\*[^*]+\*\*:?\s*)?)", line)
+        head = prefix.group(1) if prefix else ""
+        body = line[len(head):]
+        kept = []
+        for sentence in _SENTENCE_SPLIT.split(body):
+            problems = check_positions(sentence, chart) + check_analysis(sentence, chart, stage)
+            problems = [p for p in problems if "discusses" not in p]  # age topics stay as notices
+            if problems and not _QUOTING.search(sentence):
+                removed += [p.split(": the text ", 1)[-1].split(" (unless")[0].rstrip(".") for p in problems]
+            else:
+                kept.append(sentence)
+        if kept:
+            out_lines.append(head + " ".join(kept))
+        elif not head and not body.strip():
+            out_lines.append(line)
+    return "\n".join(out_lines), removed
 
 
 # ---------------------------------------------------------------- the two entry points
@@ -684,6 +740,12 @@ def write_reading(settings: Settings, chart: NatalChart, question: str | None = 
         if b2 and len(p2) < len(problems):
             notes2 = n2 + [f"The writer corrected {len(problems) - len(p2)} flagged sentence(s) in a second pass."]
             body, cited, notes, problems = b2, c2, notes2, p2
+    if problems and settings.writer.remove_flagged:
+        body, removed = remove_flagged_sentences(body, chart, stage)
+        if removed:
+            problems = check_positions(body, chart) + check_analysis(body, chart, stage)
+            notes.append(f"{len(removed)} statement(s) that contradicted the chart were removed: "
+                         + "; ".join(dict.fromkeys(removed)) + ".")
     notices = notes + problems
     if passages and not cited:
         notices.append("The reading cites none of the library passages it was given.")

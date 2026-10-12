@@ -264,8 +264,17 @@ def analysis_facts(chart: NatalChart, on: date | None = None) -> str:
                      f"{', '.join(ordinal(h) for h in asp[b])} house" + ("s" if len(asp[b]) > 1 else ""))
     received = [f"{ordinal(h)}: {', '.join(aspected_by(chart, h))}" for h in range(1, 13) if aspected_by(chart, h)]
     lines.append("Houses receiving aspects: " + "; ".join(received) + ".")
-    lines.append("Counted from the Moon (Chandra Lagna, " + p["Moon"].sign + " is the 1st): "
-                 + counted_from(chart, p["Moon"].sign) + ".")
+    moon_sign = p["Moon"].sign
+    lines.append("Houses counted from the Moon (Chandra Lagna), with their signs and occupants: " + "; ".join(
+        f"{ordinal(h)} {sign_at(moon_sign, h)}"
+        + (f" ({', '.join(b for b in BODIES if p[b].sign == sign_at(moon_sign, h))})"
+           if any(p[b].sign == sign_at(moon_sign, h) for b in BODIES) else "")
+        for h in range(1, 13)) + ".")
+    lines.append("Sign rulers (fixed): " + "; ".join(f"{s} - {SIGN_LORD[s]}" for s in SIGNS)
+                 + ". A planet's own signs are only the signs it rules.")
+    lines.append("Natural significators (karakas): Sun - father, soul, authority; Moon - mother, mind; Mars - siblings, "
+                 "courage, property; Mercury - intellect, speech, learning; Jupiter - children, wisdom, teachers, the "
+                 "husband; Venus - the wife, marriage, arts, comfort; Saturn - longevity, discipline, service.")
     lines.append("Counted from each planet (the sign a planet occupies is the 1st from it):")
     for b in PLANETS:
         lines.append(f"- from {b} ({p[b].sign}): {counted_from(chart, p[b].sign)}")

@@ -199,8 +199,13 @@ def test_the_repair_is_kept_only_when_it_has_fewer_problems(settings):
         return Written(text="Saturn in the 7th house." if len(calls) == 1 else "Saturn in the 9th house. Mars in Leo.",
                        model="fake")
 
+    settings.writer.remove_flagged = False
     r = write_reading(settings, chart, write=write, search_fn=lambda *a, **k: [], on=date(1900, 1, 1))
     assert len(calls) == 2 and r.text.endswith("Saturn in the 7th house.")
+    settings.writer.remove_flagged = True  # the wrong sentence is then deleted, with a notice
+    calls.clear()
+    r = write_reading(settings, chart, write=write, search_fn=lambda *a, **k: [], on=date(1900, 1, 1))
+    assert "Saturn in the 7th house." not in r.text and any("were removed" in n for n in r.notices)
     settings.writer.repair = False
     calls.clear()
     write_reading(settings, chart, write=write, search_fn=lambda *a, **k: [], on=date(1900, 1, 1))
