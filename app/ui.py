@@ -39,6 +39,20 @@ def _settings_for(config_file: str, database_url: str) -> Settings:
     return s
 
 
+@st.cache_resource
+def _warm_up(config_file: str, database_url: str) -> bool:
+    """Load the query embedding model in the background once per server process. A local model
+    (EmbeddingGemma on this laptop's CPU) takes 30-90 s to load; without this the first question's
+    search ran into the 30 s tool timeout and failed."""
+    import threading
+
+    from mmrag.retrieval.hybrid import warm_up
+
+    settings = _settings_for(config_file, database_url)
+    threading.Thread(target=warm_up, args=(settings,), daemon=True, name="embedder-warm-up").start()
+    return True
+
+
 def _settings() -> Settings:
     import os
 
@@ -47,7 +61,9 @@ def _settings() -> Settings:
     from mmrag.config import PROJECT_ROOT
 
     load_dotenv(PROJECT_ROOT / ".env")
-    return _settings_for(os.environ.get("MMRAG_CONFIG", ""), os.environ.get("DATABASE_URL", ""))
+    key = (os.environ.get("MMRAG_CONFIG", ""), os.environ.get("DATABASE_URL", ""))
+    _warm_up(*key)
+    return _settings_for(*key)
 
 
 @st.cache_data(max_entries=64, show_spinner=False)

@@ -222,3 +222,50 @@ def test_the_checker_catches_wrong_dasha_years_and_house_kinds():
     notes = check_positions(text, chart)
     assert len(notes) == 2
     assert "Sun mahadasha as 1940-1956; the chart has 1899-1905" in notes[0] and "4th house a trikona" in notes[1]
+
+
+def test_warm_up_loads_a_local_model_but_not_an_api_one(monkeypatch):
+    from mmrag.index import embed
+
+    loads = []
+    monkeypatch.setattr(embed, "load_local_model", lambda model, dims: loads.append(model) or object())
+    e = embed.Embedder.__new__(embed.Embedder)
+    e.provider, e.model, e.dims, e._local = "local", "m", 768, None
+    e.warm_up()
+    e.warm_up()
+    assert loads == ["m"]  # loaded once, kept
+    e.provider, e._local = "openai", None
+    e.warm_up()
+    assert loads == ["m"]
+
+
+def test_a_blocked_scikit_learn_is_replaced_by_a_stand_in(monkeypatch):
+    import builtins
+    import sys
+
+    from mmrag.index import embed
+
+    real_import = builtins.__import__
+
+    def blocked(name, *args, **kwargs):
+        if name == "sklearn.metrics" or name.startswith("sklearn"):
+            raise ImportError("DLL load failed: An Application Control policy has blocked this file.")
+        return real_import(name, *args, **kwargs)
+
+    saved = {k: v for k, v in sys.modules.items() if k == "sklearn" or k.startswith("sklearn.")}
+    for k in saved:
+        monkeypatch.delitem(sys.modules, k)
+    monkeypatch.setattr(builtins, "__import__", blocked)
+    try:
+        embed._without_blocked_sklearn()
+    finally:
+        monkeypatch.setattr(builtins, "__import__", real_import)
+    stand_in = sys.modules["sklearn.metrics"]
+    assert callable(stand_in.pairwise_distances) and callable(stand_in.f1_score)
+    with pytest.raises(AttributeError):
+        stand_in.__file__  # noqa: B018
+    with pytest.raises(RuntimeError):
+        stand_in.roc_curve([1], [0])
+    for k in [k for k in sys.modules if k == "sklearn" or k.startswith("sklearn.")]:
+        monkeypatch.delitem(sys.modules, k)
+    sys.modules.update(saved)

@@ -47,10 +47,53 @@ def _retryable(e: Exception) -> bool:
     return getattr(e, "status_code", None) in _RETRY_STATUS
 
 
+def _without_blocked_sklearn() -> None:
+    """sentence-transformers imports scikit-learn at startup for one function (pairwise_distances) that
+    encoding never calls. When Windows Smart App Control blocks scikit-learn's DLLs (it started doing so
+    on this laptop on 2026-10-12), put a stand-in module in its place so the model still loads."""
+    import sys
+    import types
+
+    try:
+        import sklearn.metrics  # noqa: F401
+    except ImportError as e:
+        if "Application Control policy" not in str(e):
+            return
+        for name in [n for n in sys.modules if n == "sklearn" or n.startswith("sklearn.")]:
+            del sys.modules[name]  # half-imported modules from the failed attempt
+
+        def pairwise_distances(*args, **kwargs):
+            raise RuntimeError("scikit-learn is blocked by Windows Smart App Control on this machine")
+
+        from importlib.machinery import ModuleSpec
+
+        sklearn, metrics = types.ModuleType("sklearn"), types.ModuleType("sklearn.metrics")
+        for mod in (sklearn, metrics):  # torch._dynamo looks modules up with find_spec
+            mod.__spec__ = ModuleSpec(mod.__name__, None, is_package=True)
+            mod.__path__ = []
+        # Any name imported from it (pairwise_distances, roc_curve, f1_score, ...) is the stand-in.
+        def any_name(name: str):
+            if name.startswith("__"):  # __file__, __wrapped__ ...: genuinely absent
+                raise AttributeError(name)
+            return pairwise_distances
+
+        metrics.__getattr__ = any_name
+        sklearn.metrics = metrics
+        sys.modules["sklearn"], sys.modules["sklearn.metrics"] = sklearn, metrics
+        try:  # transformers then skips its optional scikit-learn code (assisted generation)
+            import transformers.utils.import_utils as tf_imports
+
+            tf_imports._sklearn_available = False
+        except Exception:  # noqa: BLE001 - an older or newer transformers without that flag
+            pass
+        _log.warning("scikit-learn is blocked by Smart App Control; loading sentence-transformers without it")
+
+
 @lru_cache(maxsize=2)
 def load_local_model(model: str, dims: int):
     """A sentence-transformers model, text tower only. Loaded on first use and kept for the process:
     loading takes tens of seconds, and indexing a library builds one Embedder per document."""
+    _without_blocked_sklearn()
     try:
         import torch
         from sentence_transformers import SentenceTransformer
@@ -106,6 +149,12 @@ class Embedder:
         if self._local is None:
             self._local = load_local_model(self.model, self.dims)
         return self._local
+
+    def warm_up(self) -> None:
+        """Load a local model now rather than at the first uncached text (30-90 s on a laptop CPU).
+        Embedding a cached text does not load it, so a warm-up query is not enough."""
+        if self.provider == "local":
+            self._local_model()
 
     def _encode_local(self, texts: list[str]) -> list[list[float]]:
         vectors = self._local_model().encode(texts, batch_size=self.batch, normalize_embeddings=True,

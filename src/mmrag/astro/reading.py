@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import date
 from typing import Callable, Literal
@@ -128,9 +129,15 @@ def gather_passages(settings: Settings, queries: list[str], limit: int,
     if limit <= 0 or not queries:
         return []
     if search_fn is None:
+        from mmrag.retrieval.hybrid import _default_embedder, batch_embed_queries
         from mmrag.retrieval.hybrid import search as search_fn
+
+        if embed_query is None:  # one batch for all queries, then the searches run in parallel
+            embed_query = _default_embedder(settings)
+            batch_embed_queries(settings, queries)
     k = 3 if len(queries) > 1 else limit
-    per_query = [search_fn(settings, q, "text", k, embed_query=embed_query) for q in queries]
+    with ThreadPoolExecutor(max_workers=min(4, len(queries))) as pool:
+        per_query = list(pool.map(lambda q: search_fn(settings, q, "text", k, embed_query=embed_query), queries))
     out, seen = [], set()
     for rank in range(k):
         for q, hits in zip(queries, per_query):

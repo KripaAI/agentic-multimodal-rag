@@ -30,6 +30,28 @@ def _chart_table(chart) -> None:
     _table(["", "sign", "degree", "house", "nakshatra pada", "notes"], rows)
 
 
+def _wake_writer(settings: Settings) -> None:
+    """Start the GPU while the user types the birth details: any request makes Modal start the
+    server, which takes a minute or two from cold. At most once every 4 minutes (it stops after 5 idle)."""
+    import threading
+    import time as _time
+    import urllib.request
+
+    base = (settings.secrets.writer_base_url or "").rstrip("/")
+    if not base or _time.monotonic() - st.session_state.get("writer_woken", -1e9) < 240:
+        return
+    st.session_state["writer_woken"] = _time.monotonic()
+    url = base[:-3] + "/health" if base.endswith("/v1") else base + "/health"
+
+    def ping() -> None:
+        try:
+            urllib.request.urlopen(url, timeout=600).read()
+        except Exception:  # noqa: BLE001 - only a warm-up
+            pass
+
+    threading.Thread(target=ping, daemon=True, name="writer-wake-up").start()
+
+
 def reading_view(settings: Settings, user: service.User) -> None:
     from mmrag.astro.natal import ChartInputError, compute_chart, parse_birth
     from mmrag.astro.reading import WriterNotConfigured, sources_markdown, write_reading
@@ -43,6 +65,8 @@ def reading_view(settings: Settings, user: service.User) -> None:
                "Astrology describes tendencies, not certainties; it is no substitute for medical, legal or "
                "financial advice.")
     astro_ready = bool(settings.secrets.writer_base_url and settings.secrets.writer_api_key)
+    if astro_ready:
+        _wake_writer(settings)
     with st.form("birth"):
         c = st.columns(2)
         name = c[0].text_input("Name (optional)")

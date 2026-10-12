@@ -168,5 +168,22 @@ def _default_embedder(settings: Settings) -> Callable[[str], list[float]]:
         from mmrag.index.embed import Embedder
 
         embedder = Embedder(settings)
-        _embedders[key] = lru_cache(maxsize=512)(lambda q: embedder.embed([q], "query")[0])
+        fn = lru_cache(maxsize=512)(lambda q: embedder.embed([q], "query")[0])
+        fn.embedder = embedder  # for batch_embed_queries
+        _embedders[key] = fn
     return _embedders[key]
+
+
+def batch_embed_queries(settings: Settings, queries: list[str]) -> None:
+    """Embed several queries in one pass through the default embedder, so the per-query calls that
+    follow are cache hits. A local model embeds a batch of 13 about as fast as one query."""
+    embedder = getattr(_default_embedder(settings), "embedder", None)
+    if embedder is not None and queries:
+        embedder.embed(list(dict.fromkeys(queries)), "query")
+
+
+def warm_up(settings: Settings) -> None:
+    """Load the query embedding model ahead of the first question (the UI does it at start)."""
+    embedder = getattr(_default_embedder(settings), "embedder", None)
+    if embedder is not None:
+        embedder.warm_up()
