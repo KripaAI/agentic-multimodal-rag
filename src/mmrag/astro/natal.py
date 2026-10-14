@@ -227,6 +227,10 @@ def vimshottari(moon_lon: float, birth: datetime) -> tuple[list[Dasha], float]:
 def _ephemeris_dir() -> Path:
     from mmrag.config import PROJECT_ROOT
 
+    if not os.environ.get("MMRAG_EPHEMERIS_DIR"):  # scripts that never load settings still find the file named in .env
+        from dotenv import load_dotenv
+
+        load_dotenv(PROJECT_ROOT / ".env")
     return Path(os.environ.get("MMRAG_EPHEMERIS_DIR") or PROJECT_ROOT / "data" / "ephemeris")
 
 
