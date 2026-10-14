@@ -149,6 +149,12 @@ def neecha_bhanga(chart: NatalChart) -> list[NeechaBhanga]:
                 where = _kendra_from_lagna_or_moon(chart, who)
                 if where:
                     nb.classical.append(f"{who}, {role}: {where}")
+            elif who == b and role.startswith("the lord of") and who == exalt_lord:
+                # Mercury, debilitated in Pisces, rules its own exaltation sign (Virgo): the rule "the lord of the
+                # exaltation sign in a kendra" then asks whether Mercury itself is in a kendra (review 2026-10-13).
+                where = _kendra_from_lagna_or_moon(chart, b)
+                if where:
+                    nb.classical.append(f"{b} itself, the lord of {EXALTED[b]}, its own exaltation sign: {where}")
         for who, role in ((dispositor, f"the lord of {p.sign}"), (exalted_here, f"the planet exalted in {p.sign}")):
             if who and who != b and chart.placements[who].sign == p.sign:
                 nb.later.append(f"joined by {who}, {role}")

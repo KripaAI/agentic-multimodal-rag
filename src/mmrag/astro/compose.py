@@ -15,8 +15,8 @@ from datetime import date
 
 from mmrag.astro.analysis import (DUSTHANA, KENDRA, TRIKONA, aspects, life_stage, navamsa, navamsa_dignity,
                                   neecha_bhanga, yogas)
-from mmrag.astro.natal import (BODIES, DASHA_ORDER, DEBILITATED, EXALTED, NAKSHATRAS, SIGN_LORD, NatalChart, dms,
-                               ordinal)
+from mmrag.astro.natal import (BODIES, DASHA_ORDER, DASHA_YEARS, DEBILITATED, EXALTED, NAKSHATRAS, SIGN_LORD,
+                               NatalChart, antardashas, dms, ordinal)
 from mmrag.ingest.charts import SIGNS
 
 HOUSE_MEANINGS = {1: "self, body and temperament", 2: "family, speech and wealth", 3: "courage, effort and siblings",
@@ -80,7 +80,7 @@ def factual_sections(chart: NatalChart, on: date | None = None) -> str:
                      + (f", in its {ad.sub} sub-period (antardasha) until {ad.end:%B %Y}." if ad else "."))
     lines.append(f"Age: {stage.age} ({stage.stage}).")
 
-    strengths, challenges = [], []
+    strengths, challenges, notes = [], [], []
     for b in BODIES:
         pl = p[b]
         if pl.dignity in ("exalted", "own sign"):
@@ -99,7 +99,10 @@ def factual_sections(chart: NatalChart, on: date | None = None) -> str:
                                                                     if nb.later else "") + ".")
     for y in yogas(chart):
         if y.name == "Kemadruma":
-            (strengths if "cancelled by" in y.condition else challenges).append(f"Kemadruma: {y.condition}.")
+            if "cancelled by" in y.condition:  # a difficult yoga that is cancelled: neither strength nor challenge
+                notes.append(f"Kemadruma is present but cancelled: {y.condition}.")
+            else:
+                challenges.append(f"Kemadruma: {y.condition}.")
         else:
             strengths.append(f"{y.name}: {y.condition}.")
     for b in BODIES:
@@ -118,10 +121,86 @@ def factual_sections(chart: NatalChart, on: date | None = None) -> str:
     lines += ["", "**Key factors** _(calculated by software)_", ""]
     lines += [f"- Strength: {s}" for s in dict.fromkeys(strengths)]
     lines += [f"- Challenge: {c}" for c in dict.fromkeys(challenges)]
+    lines += [f"- Note: {n}" for n in dict.fromkeys(notes)]
+    coming = coming_periods(chart, on)
+    if coming:
+        lines += ["", coming]
     return "\n".join(lines)
 
 
-_STRIP_HEADINGS = re.compile(r"^\s*(?:#+\s*)?\**\s*(chart overview|relevant factors|key factors)\s*\**\s*:?\s*$", re.I)
+def _lord_note(chart: NatalChart, body: str) -> str:
+    """What a dasha lord rules and where it sits: 'Mercury rules the 3rd and 12th and sits in Pisces in the 9th
+    house (...), debilitated, with the debility cancelled'."""
+    pl = chart.placements[body]
+    rules = (f"rules the {_join([ordinal(h) for h in pl.lord_of])}" if pl.lord_of
+             else "rules no sign (a node acts through its placement)")
+    dignity = pl.dignity or ""
+    if dignity == "debilitated":
+        nb = next((x for x in neecha_bhanga(chart) if x.body == body), None)
+        dignity = "debilitated, with the debility cancelled" if nb and nb.classical else "debilitated"
+    return (f"{body} {rules} and sits in {pl.sign} in the {ordinal(pl.house)} house ({HOUSE_MEANINGS[pl.house]})"
+            + (f", {dignity}" if dignity else ""))
+
+
+CAREER_QUESTION = re.compile(r"\b(?:career|careers|job|jobs|profession\w*|occupation|vocation|business|work|"
+                             r"field\s+of\s+work|which\s+field)\b", re.I)
+
+
+def career_factors(chart: NatalChart) -> str:
+    """'Career factors', written by code: the 10th house, what is in it, its lord and the aspects on it. A
+    review (2026-10-13) found a career answer built on the 5th house that never looked at the 10th."""
+    from mmrag.astro.analysis import aspected_by, sign_at
+
+    p, lagna = chart.placements, chart.lagna.sign
+    tenth = sign_at(lagna, 10)
+    lord = SIGN_LORD[tenth]
+    occupants = [b for b in BODIES if p[b].house == 10]
+    on_tenth = aspected_by(chart, 10)
+    moon_tenth = sign_at(p["Moon"].sign, 10)
+    from_moon = [b for b in BODIES if p[b].sign == moon_tenth]
+    return "\n".join([
+        "**Career factors** _(calculated by software)_", "",
+        f"- The 10th house (career, work and public standing) is {tenth}; it holds "
+        f"{_join(occupants) if occupants else 'no planet'}.",
+        f"- Its lord: {_lord_note(chart, lord)}.",
+        f"- Aspects on the 10th house: {_join(on_tenth) if on_tenth else 'none'} (Rahu and Ketu not counted).",
+        f"- The 10th from the Moon is {moon_tenth}; it holds {_join(from_moon) if from_moon else 'no planet'}."])
+
+
+def coming_periods(chart: NatalChart, on: date | None = None) -> str:
+    """'Coming periods', written by code: the running mahadasha and sub-period, the sub-periods still to come
+    in it, and the next mahadasha with what its lord rules. The writer used to call the next mahadasha a
+    'sub-period' (review 2026-10-13), which hid the biggest change ahead from a question about the future."""
+    on = on or date.today()
+    md, ad = chart.current(on)
+    if not md or not ad:
+        return ""
+    lines = ["**Coming periods** _(calculated by software)_", "",
+             f"- Now: {md.lord} mahadasha ({md.start:%B %Y} to {md.end:%B %Y}), in its {ad.sub} sub-period "
+             f"(antardasha) until {ad.end:%B %Y}. {_lord_note(chart, md.lord)}."
+             + (f" {_lord_note(chart, ad.sub)}." if ad.sub != md.lord else "")]
+    later = [a for a in antardashas(md) if a.start >= ad.end]
+    if later:
+        lines.append(f"- Sub-periods still to come in the {md.lord} mahadasha: "
+                     + "; ".join(f"{a.sub} ({a.start:%B %Y} to {a.end:%B %Y})" for a in later[:3])
+                     + ("; and more" if len(later) > 3 else "") + ".")
+    else:
+        lines.append(f"- The {ad.sub} sub-period is the last one of the {md.lord} mahadasha.")
+    i = chart.dashas.index(md)
+    if i + 1 < len(chart.dashas):
+        nxt = chart.dashas[i + 1]
+        first = antardashas(nxt)[0]
+        lines.append(f"- Next mahadasha: {nxt.lord}, {nxt.start:%B %Y} to {nxt.end:%B %Y} "
+                     f"({DASHA_YEARS[nxt.lord]} years). This is a new major period, not a sub-period. "
+                     f"{_lord_note(chart, nxt.lord)}. It opens with its own {nxt.lord} sub-period, until "
+                     f"{first.end:%B %Y}.")
+        if i + 2 < len(chart.dashas):
+            after = chart.dashas[i + 2]
+            lines.append(f"- After that: {after.lord} mahadasha from {after.start:%B %Y}.")
+    return "\n".join(lines)
+
+
+_STRIP_HEADINGS = re.compile(r"^\s*(?:#+\s*)?\**\s*(chart overview|relevant factors|key factors|coming periods)\s*\**\s*:?\s*$", re.I)
 _ANY_HEADING = re.compile(r"^\s*(?:#+\s*\S|\*\*[^*]{2,60}\*\*\s*:?\s*$)")
 
 

@@ -8,6 +8,7 @@ query_log, never re-running the agent, validator or search.
 from __future__ import annotations
 
 import json
+import os
 import sys
 import uuid
 from collections import defaultdict
@@ -61,7 +62,10 @@ def _settings() -> Settings:
     from mmrag.config import PROJECT_ROOT
 
     load_dotenv(PROJECT_ROOT / ".env")
-    key = (os.environ.get("MMRAG_CONFIG", ""), os.environ.get("DATABASE_URL", ""))
+    # MMRAG_APP_CONFIG (.env) is the app's default config, so the app opens the right database even when
+    # started without MMRAG_CONFIG; the CLI and the tests are not affected.
+    config = os.environ.get("MMRAG_CONFIG") or os.environ.get("MMRAG_APP_CONFIG", "")
+    key = (config, os.environ.get("DATABASE_URL", ""))
     _warm_up(*key)
     return _settings_for(*key)
 
@@ -158,21 +162,34 @@ def source_panel(settings: Settings) -> None:
 
 # ---------------------------------------------------------------- chat
 
-def _chart_reading(settings: Settings, question: str) -> bool:
+def _chart_reading(settings: Settings, user: service.User, question: str) -> bool:
     """A message with the asker's birth details gets a chart reading (computed chart, written by the
     fine-tuned model) instead of a document answer. True when it was handled here."""
     import time
 
-    from mmrag.astro.chat import chart_reply
-    from mmrag.astro.reading import asks_about_own_chart
+    from mmrag.astro.chat import BirthDetails, chart_reply, followup_reply
+    from mmrag.astro.reading import asks_about_own_chart, asks_personal_followup
 
-    if not asks_about_own_chart(question):
+    # Birth details are kept per conversation, so a follow-up such as "In which field should I make my career?"
+    # is answered from the chart already read, not from the books. They are also stored with the turn in
+    # query_log, so a conversation reopened from the sidebar keeps its readings and its chart.
+    thread = st.session_state.setdefault("thread_id", uuid.uuid4().hex[:12])
+    charts = st.session_state.setdefault("thread_charts", {})
+    saved = charts.get(thread)
+    fresh = asks_about_own_chart(question)
+    followup = saved is not None and (fresh or asks_personal_followup(question))
+    if not fresh and not followup:
         return False
     started = time.monotonic()
     with st.status("Reading your birth details…", expanded=False) as status:
         try:
             status.update(label="Calculating your chart and writing the reading… (up to a minute or two)")
-            answer = chart_reply(settings, question)
+            fresh_details = []
+            answer = chart_reply(settings, question, on_details=fresh_details.append)
+            if fresh_details:
+                charts[thread] = fresh_details[0].model_dump()
+            elif answer is None and followup:
+                answer = followup_reply(settings, question, BirthDetails(**saved))
         except Exception as e:  # noqa: BLE001 - fall back to the document agent
             status.update(label=f"The chart reading failed ({type(e).__name__}); answering from the books",
                           state="error")
@@ -182,9 +199,16 @@ def _chart_reading(settings: Settings, question: str) -> bool:
             return False
         status.update(label=f"Done in {time.monotonic() - started:.0f} s", state="complete")
     st.session_state["own_chart_hint"] = False
+    latency_ms = int((time.monotonic() - started) * 1000)
+    try:  # a failed save must not lose the answer on screen
+        from mmrag.obs.querylog import log_chart_turn
+
+        log_chart_turn(settings, user.user_id, thread, question, answer, settings.writer.model, latency_ms,
+                       birth=charts.get(thread), followup=not fresh_details)
+    except Exception:  # noqa: BLE001
+        pass
     st.session_state.setdefault("chat_history", []).append({
-        "question": question, "answer": answer, "cost": None,
-        "latency_ms": int((time.monotonic() - started) * 1000), "trace_id": None})
+        "question": question, "answer": answer, "cost": None, "latency_ms": latency_ms, "trace_id": None})
     st.rerun()
     return True
 
@@ -197,7 +221,7 @@ def ask(settings: Settings, user: service.User, question: str) -> None:
     except service.LimitReached as e:
         st.warning(str(e))  # no API call is made
         return
-    if _chart_reading(settings, question):
+    if _chart_reading(settings, user, question):
         return
     thread = st.session_state.setdefault("thread_id", uuid.uuid4().hex[:12])
     with st.status("Working…", expanded=False) as status:
@@ -234,9 +258,14 @@ def sidebar(settings: Settings, user: service.User) -> None:
             if st.button(label, key=f"thread-{t.thread_id}", width="stretch",
                          type="primary" if t.thread_id == st.session_state.get("thread_id") else "secondary"):
                 st.session_state["thread_id"] = t.thread_id
+                turns = thread_turns(settings, user.user_id, t.thread_id)
                 st.session_state["chat_history"] = [
                     {"question": x.question, "answer": x.answer, "cost": x.cost_usd, "latency_ms": x.latency_ms,
-                     "trace_id": x.trace_id} for x in thread_turns(settings, user.user_id, t.thread_id)]
+                     "trace_id": x.trace_id} for x in turns]
+                birth = next((x.answer["birth"] for x in reversed(turns)
+                              if isinstance(x.answer, dict) and x.answer.get("birth")), None)
+                if birth:  # follow-ups in the reopened conversation use the same chart
+                    st.session_state.setdefault("thread_charts", {})[t.thread_id] = birth
                 st.session_state.pop("source", None)
                 st.session_state.pop("view", None)
                 st.rerun()
@@ -375,6 +404,16 @@ def chat_view(settings: Settings, user: service.User) -> None:
 def main() -> None:
     settings = _settings()
     user = service.require_user(settings, st.session_state.get("token"))  # every rerun
+    auto = os.environ.get("MMRAG_AUTO_SIGN_IN", "").strip()  # .env: no sign-in screen, for local use only
+    if user is None and auto:
+        token = service.auto_sign_in(settings, auto)
+        if token:
+            st.session_state["token"] = token
+            user = service.require_user(settings, token)
+        if user is None:  # never fall back to the sign-in form while automatic sign-in is on
+            st.error(f"Could not sign {auto} in automatically (database {settings.database_name or 'default'}). "
+                     "Check that PostgreSQL is running, then reload the page.")
+            return
     if user is None:
         if "token" in st.session_state:  # expired or revoked: drop everything from that session
             note = st.session_state.get("_signed_out_message")
@@ -383,7 +422,7 @@ def main() -> None:
                 st.session_state["_signed_out_message"] = note
         login.sign_in_screen(settings)  # (never clear on every rerun: that would wipe the form being submitted)
         return
-    if user.must_change_password:
+    if user.must_change_password and not auto:
         login.change_password_screen(settings, forced=True)
         return
     sidebar(settings, user)

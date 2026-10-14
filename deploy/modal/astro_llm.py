@@ -1,6 +1,6 @@
-"""astro-v2-8b on Modal: llama.cpp's llama-server (OpenAI-compatible API) on one GPU.
+"""astro-v4-8b on Modal: llama.cpp's llama-server (OpenAI-compatible API) on one GPU.
 
-The GGUF (private repo iamaigeek/astro-v2-8b-gguf, 5 GB) is downloaded once into a Modal Volume
+The GGUF (private repo iamaigeek/astro-v4-8b-gguf, 5 GB) is downloaded once into a Modal Volume
 with the token from the Modal secret `huggingface` (key HF_TOKEN). Requests need the API key from
 the Modal secret `astro-llm-key` (key ASTRO_LLM_API_KEY) as `Authorization: Bearer <key>`.
 
@@ -19,9 +19,10 @@ import subprocess
 
 import modal
 
-REPO = "iamaigeek/astro-v2-8b-gguf"
-GGUF = "astro-v2-8b.Q4_K_M.gguf"
-SHA256 = "4b1898f08f1ef9476ff4221f6eeee6162a2766c4b8dfa6bb70b7f75bfb1ccf5d"
+REPO = "iamaigeek/astro-v4-8b-gguf"  # v2 (iamaigeek/astro-v2-8b-gguf, sha256 4b1898f0...) is the fallback
+GGUF = "astro-v4-8b.Q4_K_M.gguf"
+SHA256 = "29dbdb358060dc5cea1ac4e14cc0a4f1057c0abde4f2c491e21738f989996b9f"
+ALIAS = "astro-v4-8b"  # the model name clients send
 MODELS = "/models"
 PORT = 8080
 GPU = "L4"  # 24 GB: the 5 GB model plus a 32k-token KV cache (~4.5 GB) fits with room to spare
@@ -71,7 +72,7 @@ def serve() -> None:
     subprocess.Popen([
         "/app/llama-server",
         "--model", f"{MODELS}/{GGUF}",
-        "--alias", "astro-v2-8b",
+        "--alias", ALIAS,
         "--host", "0.0.0.0", "--port", str(PORT),
         "--n-gpu-layers", "999",
         "--ctx-size", "32768", "--parallel", "2",  # 2 slots of 16k: a reading prompt is ~6k tokens

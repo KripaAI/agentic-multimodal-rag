@@ -81,7 +81,7 @@ def reading_view(settings: Settings, user: service.User) -> None:
         lat = c[0].number_input("Latitude (north +)", min_value=-66.0, max_value=66.0, value=28.6139, format="%.4f")
         lon = c[1].number_input("Longitude (east +)", min_value=-180.0, max_value=180.0, value=77.2090, format="%.4f")
         question = st.text_input("Question about this chart (optional; empty for a full reading)")
-        writers = (["astro-v2-8b (fine-tuned)"] if astro_ready else []) + [f"{settings.agent.model} (to compare)"]
+        writers = ([f"{settings.writer.model} (fine-tuned)"] if astro_ready else []) + [f"{settings.agent.model} (to compare)"]
         writer = st.radio("Writer", writers, horizontal=True)
         use_books = st.checkbox("Use passages from the library", value=True)
         submitted = st.form_submit_button("Read the chart", type="primary")

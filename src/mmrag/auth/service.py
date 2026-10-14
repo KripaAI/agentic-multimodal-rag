@@ -100,6 +100,28 @@ def login(settings: Settings, email: str, password: str, ip: str | None) -> Logi
         return LoginResult(ok=True, token=token, must_change_password=must_change)
 
 
+def auto_sign_in(settings: Settings, email: str) -> str | None:
+    """A session token for an active account, with no password: for a single-user app on this machine only
+    (MMRAG_AUTO_SIGN_IN in .env; the server listens on 127.0.0.1). None if there is no such active account."""
+    with db.connect(settings) as conn:
+        row = conn.execute("SELECT user_id, status FROM users WHERE email = %s", (_norm(email),)).fetchone()
+        if row is None:  # no sign-in at all on this machine: the account is created when first needed
+            uid = conn.execute("INSERT INTO users (email, password_hash, role, must_change_password) "
+                               "VALUES (%s, %s, 'admin', false) RETURNING user_id",
+                               (_norm(email), hash_password(_temporary_password()))).fetchone()[0]
+            _event(conn, "user_created", uid, _norm(email))
+            row = (uid, "active")
+        if row[1] != "active":
+            conn.execute("UPDATE users SET status = 'active', locked_until = NULL, failed_attempts = 0 "
+                         "WHERE user_id = %s", (row[0],))
+        token = sessions.create(conn, row[0], settings)
+        conn.execute("UPDATE users SET last_login_at = now() WHERE user_id = %s", (row[0],))
+        _event(conn, "login_success", row[0], _norm(email), None)
+        conn.commit()
+    _log.info("automatic sign-in (MMRAG_AUTO_SIGN_IN)")
+    return token
+
+
 def require_user(settings: Settings, token: str | None) -> User | None:
     """Called on every Streamlit rerun; None means: clear the state and show the sign-in screen."""
     with db.connect(settings) as conn:

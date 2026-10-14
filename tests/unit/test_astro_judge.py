@@ -122,7 +122,7 @@ def test_code_written_sections_and_reference_facts():
     child = natal.compute_chart(parse_birth("2020-04-20", "16:46", "Asia/Kolkata", 28.61, 77.21))
     text = factual_sections(child, date(2026, 10, 12))
     assert "Virgo Lagna" in text and "the 5th (Capricorn): Mars, Jupiter and Saturn" in text
-    assert "Challenge: Mercury is debilitated in Pisces and the debility is not cancelled" in text
+    assert "Strength: Mercury is debilitated in Pisces, but the debility is cancelled (neecha bhanga): Mercury itself, the lord of Virgo" in text  # its own exaltation lord in a kendra (review 2026-10-13)
     assert "Challenge: Mars is debilitated in the Navamsa (Cancer)" in text and "longevity" not in text
     assert "Ashlesha, Jyeshtha and Revati" in reference_facts("Which nakshatras are ruled by Mercury?")
     assert "Jupiter in a kendra" in reference_facts("What is Gajakesari yoga?")

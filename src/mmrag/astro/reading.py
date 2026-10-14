@@ -59,11 +59,31 @@ class Reading:
     seconds: float = 0.0
     input_tokens: int = 0
     output_tokens: int = 0
+    body: str = ""                              # the writer's part only (text without the code-written sections)
 
 
 _DATE = re.compile(r"\b(?:\d{1,2}[-/.]\d{1,2}[-/.]\d{2,4}|\d{4}-\d{1,2}-\d{1,2})\b")
 _PERSONAL = re.compile(r"\b(?:date of birth|d\.?o\.?b|born on|i was born|my birth|my (?:future|chart|kundli|horoscope|"
                        r"rashi|lagna|dasha)|birth (?:time|place|details))\b", re.I)
+
+
+_ME = re.compile(r"\b(?:my|me|mine|myself|i|i'm|im|i'll|am i|should i|will i|can i)\b", re.I)
+_LIFE = re.compile(
+    r"\b(?:career|careers|job|jobs|profession\w*|field|work|business|promotion|success|marriage|marry|married|wife|"
+    r"husband|spouse|partner|love|relationships?|children|child|kids|son|daughter|health|money|wealth|financ\w*|"
+    r"income|property|education|stud(?:y|ies)|exams?|foreign|abroad|settle|travel|future|predictions?|predict|"
+    r"luck|fortune|dashas?|mahadasha|antardasha|period|lagna|ascendant|chart|kundli|horoscope|rashi|nakshatra|"
+    r"planets?|remed(?:y|ies)|gem(?:stone)?s?|yogas?|transits?|sade sati|years?)\b", re.I)
+_WHAT_ABOUT = re.compile(r"^\s*(?:and|what about|how about|tell me about)\b", re.I)
+
+
+def asks_personal_followup(question: str) -> bool:
+    """A question about the asker's own life with no birth details in it ('In which field should I make my
+    career?', 'what about marriage?'). After a chart reading in the same conversation, the chat answers it
+    from that chart instead of the books."""
+    if not _LIFE.search(question):
+        return False
+    return bool(_ME.search(question)) or bool(_WHAT_ABOUT.search(question))
 
 
 def asks_about_own_chart(question: str) -> bool:
@@ -320,12 +340,29 @@ def _bodies(group: str) -> list[str]:
     return re.findall(_B, group)
 
 
+# "Mercury governs speech. It is debilitated but receives the aspect of Jupiter": a sentence that opens with
+# It/He/She is about the last planet named in the sentence before. The checks read the planet in its place.
+_PRONOUN_START_RE = re.compile(rf"\b(?P<b>{_B})\b(?P<rest>(?:(?!{_B})[^.!?\n])*[.!?]\s+)(?:It|He|She)\b(?!')"
+                               r"(?!\s+(?:also\s+)?(?:notes?|lists?|says?|shows?|states?|adds?|means?|suggests?|"
+                               r"describes?|points?|indicates?|explains?|reads?|seems?|is\s+(?:also\s+)?(?:worth|"
+                               r"important|useful|possible|likely|a\s+(?:good|time|period|tendency))))")
+
+
+def resolve_pronouns(text: str) -> str:
+    """Replace a sentence-opening It/He/She with the last planet named in the sentence before it."""
+    previous = None
+    while previous != text:
+        previous, text = text, _PRONOUN_START_RE.sub(lambda m: m.group("b") + m.group("rest") + m.group("b"), text)
+    return text
+
+
 def check_positions(text: str, chart: NatalChart) -> list[str]:
     """Every chart fact the text states that the computed chart contradicts: a planet's house or sign
     ('Saturn in the 7th house', 'Rahu and Ketu in the 1st', 'Mars in Leo'), the Lagna, a dignity
     ('Saturn is debilitated'), a lordship ('Saturn, lord of the 7th') and dasha dates. A book's
     general rule quoted in the text is flagged too; the notice says so. Aspects are not checked."""
     problems: list[str] = []
+    text = resolve_pronouns(text)
     pl = chart.placements
     for m in _HOUSE_RE.finditer(text):
         house = int(m.group(2))
@@ -343,6 +380,14 @@ def check_positions(text: str, chart: NatalChart) -> list[str]:
         if sign != chart.lagna.sign:
             problems.append(f"says {sign} Lagna; the chart's Lagna is {chart.lagna.sign}")
     for m in _DIGNITY_RE.finditer(text):
+        # "Mars is debilitated in the Navamsa", "Venus, exalted in Navamsa": a Navamsa dignity, which check_analysis
+        # verifies against the Navamsa; comparing it with the birth chart flagged true sentences (benchmark 2026-10-14)
+        if re.match(r"\s*(?:\(?\s*)?(?:in\s+(?:the\s+|its\s+|his\s+|her\s+)?(?:own\s+sign\s+)?)?(?:navamsa|D-?9)\b",
+                    text[m.end():m.end() + 30], re.I):
+            continue
+        if (re.match(r"\s+there\b", text[m.end():m.end() + 12])
+                and re.search(r"navamsa|\bD-?9\b", text[max(0, m.start() - 250):m.start()], re.I)):
+            continue  # "Jupiter is in its own sign in the Navamsa; and Saturn is exalted there too"
         claim = "own sign" if m.group(2).startswith("in") else m.group(2)
         named = _bodies(m.group("bodies"))
         if re.search(r"\b(?:its|his|her)\s+own", m.group(2)):  # singular: only the last planet named
@@ -354,6 +399,8 @@ def check_positions(text: str, chart: NatalChart) -> list[str]:
     lord_claims = [(m.group("body"), [int(x) for x in m.groups()[1:] if x and x.isdigit()])
                    for r in (_LORD_AFTER_RE, _LORD_PAREN_RE) for m in r.finditer(text)]
     lord_claims += [(m.group("body"), [int(m.group(1))]) for m in _LORD_BEFORE_RE.finditer(text)]
+    lord_claims += [(m.group("body"), [int(x) for x in m.groups()[1:] if x and x.isdigit()])
+                    for m in _IS_LORD_RE.finditer(text)]
     for body, houses in lord_claims:
         rules = getattr(pl[body], "lord_of", None)
         if rules is None or body in ("Rahu", "Ketu"):
@@ -406,6 +453,10 @@ def reading_rules(stage, with_passages: bool, chart: NatalChart | None = None) -
              "then the challenges. Weigh them evenly.",
              "When a debilitated planet's debility is cancelled, say so and say by which rule; do not call it "
              "simply weak."]
+    if stage.stage == "child":  # review 2026-10-13: "Mercury mahadasha is when formal schooling begins" (age 12)
+        rules.append("If asked about this child's future or career, describe aptitudes and interests to notice and "
+                     "nurture, never a fixed career. Do not tie a dasha or sub-period to starting school, exams or "
+                     "any other milestone of age: a chart does not show when those happen.")
     if chart is not None:
         nbs = neecha_bhanga(chart)
         cancelled = [nb.body for nb in nbs if nb.classical]
@@ -448,7 +499,7 @@ _JOINED_RE = re.compile(rf"(?P<a>{_B})\b(?:\s+is|\s+are|\s*,)?(?:\s+also)?\s+(?:
 _OWN_AFTER_SIGN_RE = re.compile(_BODIES + _LINK + r"\s+in\s+" + _SIGN + r"\s*,\s*(?:which\s+is\s+)?(?:its|his|her|their)\s+"
                                 r"own\s+sign")
 # "Mars ... exalted in Navamsa Cancer" / "debilitated in the Navamsa"
-_D9_DIGNITY_RE = re.compile(rf"(?P<a>{_B})\b[^.]{{0,80}}?\b(?P<d>exalted|debilitated|in\s+(?:its|his|her)\s+own\s+sign)"
+_D9_DIGNITY_RE = re.compile(rf"(?P<a>{_B})\b(?:(?!{_B})[^.]){{0,80}}?\b(?P<d>exalted|debilitated|in\s+(?:its|his|her)\s+own\s+sign)"
                             rf"\s+in\s+(?:the\s+)?(?:Navamsa|Navamsha|D-?9)\b", re.I)
 # "the 10th lord is in the 5th", "the 10th lord, Mercury, sits in the 7th"
 _LORD_IN_RE = re.compile(rf"\b(?:[Tt]he\s+)?{_ORD}\s+lord(?:\s*,)?(?:\s+(?:the\s+)?{_B})?(?:\s*,)?"
@@ -487,9 +538,33 @@ _FROM_SIGNNAME_RE = re.compile(rf"\b[Tt]he\s+{_ORD}\s+(?:house\s+|sign\s+)?from\
 # "Venus mahadasha follows from 2027", "Mars mahadasha from 2032-06-03 brings"
 _MD_START_RE = re.compile(rf"(?P<b>{_B})\s+maha\s*dasha\s+(?:follows\s+|begins\s+|starts\s+|will\s+begin\s+)?"
                           r"(?:from|on|in)\s+(?:\w+\s+)?(?P<y>\d{4})", re.I)
+# "Saturn is the 3rd lord", "Saturn is lord of the 3rd and 8th" (the comma and bracket forms are checked above)
+_IS_LORD_RE = re.compile(rf"(?P<body>{_B})\s+is\s+(?:also\s+)?(?:the\s+)?(?:{_ORD}(?:\s*(?:,|and|&)\s*(?:the\s+)?{_ORD})?"
+                         rf"\s+lord|(?:lord|ruler)\s+of\s+the\s+{_ORD}(?:\s*(?:,|and|&)\s*(?:the\s+)?{_ORD})?)\b")
+# "Venus ... forms Gajakesari with Jupiter": the planet nearest before the verb is credited with the yoga
+YOGA_PLANETS = {"gajakesari": {"Jupiter", "Moon"}, "budha-aditya": {"Sun", "Mercury"}, "ruchaka": {"Mars"},
+                "bhadra": {"Mercury"}, "hamsa": {"Jupiter"}, "malavya": {"Venus"}, "shasha": {"Saturn"},
+                "chandra-mangala": {"Moon", "Mars"}}
+_FORMS_YOGA_RE = re.compile(rf"(?P<b>{_B})\b(?:(?!{_B})[^.]){{0,80}}?\b(?:forms?|gives?|creates?|makes?|produces?)\s+"
+                            r"(?:a\s+|the\s+)?(?P<y>(?i:gajakesari|budha[- ]?aditya|ruchaka|bhadra|hamsa|malavya|"
+                            r"sh?asha|chandra[- ]?mangala))\b")
+# "Mercury rules the 3rd and 12th houses, so it sits in its own sign there"
+# (also across one sentence: "The Sun is the karaka of authority. It sits in its own sign")
+_PRONOUN_DIGNITY_RE = re.compile(rf"(?P<b>{_B})\b(?:(?!{_B})[^.]){{0,120}}?(?:\.\s+(?:(?!{_B})[^.]){{0,40}}?)?"
+                                 r"\b(?:[Ii]t|[Hh]e|[Ss]he)\s+(?:is|sits|lies|stands|"
+                                 r"remains)(?:\s+(?:also|still|well|placed|posited|there|here))*\s+(?P<d>exalted|"
+                                 r"debilitated|in\s+(?:its|his|her)\s+own\s+sign)\b")
+# "the Mercury antardasha follows from March 2027 until 2044", "the Mercury sub-period that follows Jupiter"
+_SUB_PERIOD_RE = re.compile(rf"(?P<b>{_B})\s+(?:antar\s*dasha|sub-?\s*period|bhukti)(?P<rest>[^.\n]{{0,100}})", re.I)
+_YEAR = re.compile(r"\b(?:19|20)\d\d\b")
+_FOLLOWS = re.compile(r"\b(?:follows?|following|next|comes?\s+after|after\s+(?:the\s+)?" + _B + r")\b", re.I)
 _VARGOTTAMA_RE = re.compile(rf"(?P<a>{_B})(?:\s+is|\s+being)(?:\s+also)?\s+vargottama|vargottama\s+(?P<b>{_B})", re.I)
 _CHILD_TOPICS = re.compile(r"\b(poverty|penury|daridra|wealth|riches|career|profession|marriage|spouse|wife|"
                            r"husband|divorce|death|longevity)\b", re.I)
+# "a natural time for formal schooling to begin", "when he starts school": a chart does not show these
+_SCHOOL_START_RE = re.compile(r"\b(?:formal\s+)?school(?:ing)?\s+(?:to\s+)?(?:begins?|starts?|commences?)\b|"
+                              r"\b(?:begin|begins|start|starts|enter|enters|join|joins)\s+(?:formal\s+)?school\b|"
+                              r"\b(?:begins?|starts?)\s+(?:his|her|their)\s+(?:formal\s+)?school(?:ing)?\b", re.I)
 _NEGATED = re.compile(r"(?:\bno\b|\bnot\b|\bnor\b|\bwithout\b|\babsence\b|\bisn't\b|\bdoes not\b)[^.]{0,40}$", re.I)
 
 
@@ -504,6 +579,7 @@ def check_analysis(text: str, chart: NatalChart, stage=None) -> list[str]:
     from mmrag.astro.natal import SIGN_LORD
 
     problems: list[str] = []
+    text = resolve_pronouns(text)
     for m in _FROM_SIGN_RE.finditer(text):
         n, ref, sign = int(m.group(1)), m.group("ref"), m.group(len(m.groups()))
         actual = sign_at(_house_of(ref, chart), n)
@@ -546,6 +622,10 @@ def check_analysis(text: str, chart: NatalChart, stage=None) -> list[str]:
             problems.append(f"says {a}'s debility is cancelled; no rule cancels it in this chart")
     for m in _RECEIVES_RE.finditer(text):
         target = m.group("t")
+        between = text[m.end("t"):m.start("from")]
+        if re.search(r"\b(?:" + "|".join(SIGNS) + r"|[Tt]he\s+\d{1,2}(?:st|nd|rd|th)(?:\s+house)?)\s+(?:is|are|,\s*which)\b",
+                     between):
+            continue  # "Leo is the 4th from it and receives ...": the sign or house is what receives the aspect
         digits = re.search(r"\d+", target)
         h = int(digits.group()) if digits else house_of(target.strip())
         for a in _bodies(m.group("from")):
@@ -567,6 +647,8 @@ def check_analysis(text: str, chart: NatalChart, stage=None) -> list[str]:
                                 f"{SIGN_LORD[m.group(2)]}")
     for m in _D9_DIGNITY_RE.finditer(text):
         a = m.group("a")
+        if ")" in text[m.end("a"):m.start("d")]:  # "(Sun exalted in Aries ...), and it is also exalted": not the Sun
+            continue
         claim = "own sign" if m.group("d").lower().startswith("in") else m.group("d").lower()
         actual = navamsa_dignity(a, navamsa(chart.placements[a].longitude))
         if a in SIGN_LORD.values() and actual != claim:
@@ -632,6 +714,47 @@ def check_analysis(text: str, chart: NatalChart, stage=None) -> list[str]:
                 actual = next((f"{d.start:%Y}" for d in dashas_ if d.lord == b), None)
                 problems.append(f"says {b} mahadasha begins in {y}; " + (f"it begins in {actual}" if actual else
                                 f"{b} mahadasha does not fall in this sequence") + " (a sub-period is not a mahadasha)")
+    for m in _FORMS_YOGA_RE.finditer(text):
+        b, y = m.group("b"), re.sub(r"[- ]", "-", m.group("y").lower()).replace("sasha", "shasha").replace("shhasha", "shasha")
+        y = "budha-aditya" if y.startswith("budha") else "chandra-mangala" if y.startswith("chandra") else y
+        owners = YOGA_PLANETS.get(y)
+        if owners and b not in owners:
+            problems.append(f"credits {b} with {m.group('y')} yoga; that yoga is formed by {' and '.join(sorted(owners))}")
+    for m in _PRONOUN_DIGNITY_RE.finditer(text):
+        b, d = m.group("b"), m.group("d").lower()
+        if b in ("Rahu", "Ketu") or re.search(r"navamsa|\bD-?9\b", text[m.start():m.end() + 40], re.I):
+            continue
+        if ")" in text[m.end("b"):m.start("d")]:  # "(Sun exalted in Aries ...), and it is also exalted": "it" is not the Sun
+            continue
+        claim = "own sign" if d.startswith("in") else d
+        actual = chart.placements[b].dignity
+        if actual != claim:
+            problems.append(f"calls {b} {'in its own sign' if claim == 'own sign' else claim}; in the chart it is "
+                            f"{actual or 'neither exalted, debilitated nor in its own sign'}")
+    dashas_all = getattr(chart, "dashas", None)
+    if dashas_all:
+        from datetime import date as _date
+
+        from mmrag.astro.natal import antardashas as _antardashas
+
+        subs = [a for d in dashas_all for a in _antardashas(d)]
+        md_now, ad_now = chart.current(_date.today())
+        nxt = None
+        if md_now and ad_now and _antardashas(md_now)[-1].sub == ad_now.sub:  # the running sub-period is the last
+            i = dashas_all.index(md_now)
+            nxt = dashas_all[i + 1] if i + 1 < len(dashas_all) else None
+        for m in _SUB_PERIOD_RE.finditer(text):
+            b = m.group("b").title()
+            mds = [d for d in dashas_all if d.lord == b]
+            years = {int(y) for y in _YEAR.findall(m.group("rest"))}
+            wrong = [d for d in mds for y in years if y in (d.start.year, d.end.year)
+                     and not any(a.sub == b and y in (a.start.year, a.end.year) for a in subs)]
+            if not wrong and nxt is not None and nxt.lord == b and _FOLLOWS.search(m.group("rest")):
+                wrong = [nxt]
+            if wrong:
+                d = wrong[0]
+                problems.append(f"calls the {b} mahadasha ({d.start:%B %Y} to {d.end:%B %Y}) a sub-period; "
+                                "it is a new major period")
     for m in _VARGOTTAMA_RE.finditer(text):
         a = m.group("a") or m.group("b")
         if navamsa(chart.placements[a].longitude) != chart.placements[a].sign:
@@ -647,6 +770,11 @@ def check_analysis(text: str, chart: NatalChart, stage=None) -> list[str]:
                 problems.append(f"names {name} yoga, which this chart does not have")
                 break
     if stage is not None and stage.stage == "child":
+        for school in _SCHOOL_START_RE.finditer(text):
+            if not re.search(r"\b(?:not|never|no|cannot|can't|doesn't|won't)\b", text[max(0, school.start() - 60):school.start()],
+                             re.I):
+                problems.append("ties a period to starting school, which a chart does not show")
+                break
         topics = sorted({m.group(1).lower() for m in _CHILD_TOPICS.finditer(text)
                          if not _NEGATED.search(text[max(0, m.start() - 60):m.start()])})
         if topics:
@@ -672,9 +800,15 @@ def remove_flagged_sentences(text: str, chart: NatalChart, stage=None) -> tuple[
         prefix = re.match(r"^(\s*(?:[-*]|\d+\.)\s+(?:\*\*[^*]+\*\*:?\s*)?)", line)
         head = prefix.group(1) if prefix else ""
         body = line[len(head):]
-        kept = []
+        kept, previous = [], ""
         for sentence in _SENTENCE_SPLIT.split(body):
             problems = check_positions(sentence, chart) + check_analysis(sentence, chart, stage)
+            if previous:  # "The Sun is the karaka of authority. It sits in its own sign": the claim is in this one
+                before = set(check_positions(previous, chart) + check_analysis(previous, chart, stage))
+                both = previous + " " + sentence
+                problems += [p for p in check_positions(both, chart) + check_analysis(both, chart, stage)
+                             if p not in before and p not in problems]
+            previous = sentence
             problems = [p for p in problems if "discusses" not in p]  # age topics stay as notices
             if problems and not _QUOTING.search(sentence):
                 removed += [p.split(": the text ", 1)[-1].split(" (unless")[0].rstrip(".") for p in problems]
@@ -723,11 +857,28 @@ def write_reading(settings: Settings, chart: NatalChart, question: str | None = 
         return Reading(text=DEATH_ANSWER, model="fixed answer", passages=[], cited=[], notices=[], chart=chart,
                        facts=facts, seconds=time.monotonic() - started)
     shown = factual_sections(chart, on)
-    sections = "Answer, Classical view, Dasha timing, Summary, Optional remedies" if question else \
+    from mmrag.astro.compose import CAREER_QUESTION, career_factors
+
+    career = career_factors(chart) if question and CAREER_QUESTION.search(question) else ""
+    # A question gets a direct answer, not another full reading: follow-ups in the chat came back as near
+    # copies of the first reading (2026-10-13).
+    sections = "Answer, Why the chart says this, Timing" if question else \
         "Classical view, Dasha timing, Summary, Optional remedies"
+    focus = ("\n\nAnswer this question itself, concretely, in the first lines (for a career question, name kinds "
+             "of work and the chart factor behind each; for a timing question, name the periods). Use only the "
+             "factors that bear on the question and leave everything else out: this is not a full reading, and "
+             "the reader has seen the general reading already. In Timing, say what the periods mean for this "
+             "question.") if question else ""
+    if career:
+        focus += ("\n\nThis is a career question. The software computed these career factors:\n\n" + career
+                  + "\n\nIn 'Why the chart says this', begin with the 10th house and its lord, then add other "
+                  "factors only where they support the answer.")
     request = (f"{question.strip()} Answer from this chart." if question else "Give a full reading of this chart.") \
-        + ("\n\nThe reader already sees this 'Chart overview' and 'Key factors', written by the software:\n\n"
-           f"{shown}\n\nDo not write those two sections again and do not restate positions, dignities or yogas. "
+        + focus \
+        + ("\n\nThe reader already sees this 'Chart overview', 'Key factors' and 'Coming periods', written by the "
+           f"software:\n\n{shown}\n\nDo not write those sections again and do not restate positions, dignities or "
+           "yogas. In Dasha timing, interpret the periods listed under 'Coming periods' and keep their names and dates "
+           "exactly: a mahadasha is a major period, a sub-period (antardasha) is a part of one. "
            f"Write only these sections: {sections}. Interpret the factors above; when you mention a planet, use "
            "only what the facts say about it.") \
         + "\n\n" + reading_rules(stage, bool(passages), chart)
@@ -738,6 +889,11 @@ def write_reading(settings: Settings, chart: NatalChart, question: str | None = 
         body, looped = collapse_repetition(strip_factual_sections(raw))
         body, cited, notes = resolve_citations(body, passages)
         problems = check_positions(body, chart) + check_analysis(body, chart, stage)
+        if career:  # career was asked about, so discussing it is not a slip, even for a child
+            problems = [p for p in problems if "discusses career in a reading" not in p]
+        if career and body and not re.search(r"\b10th\b|\btenth\b", body, re.I):
+            problems.append("Analysis check: the answer to a career question does not discuss the 10th house "
+                            "and its lord, listed under 'Career factors'.")
         if looped:
             notes.append("A repeated passage in the writer's output was cut.")
         return body, cited, notes, problems
@@ -767,7 +923,10 @@ def write_reading(settings: Settings, chart: NatalChart, question: str | None = 
         notices.append("The reading cites none of the library passages it was given.")
     if not body:
         notices.append("The writer returned no text.")
-    return Reading(text=shown + "\n\n" + body, model=written.model, passages=passages, cited=cited, notices=notices,
+    if career and body:
+        body = career + "\n\n" + body
+    return Reading(text=shown + "\n\n" + body, body=body, model=written.model, passages=passages, cited=cited,
+                   notices=notices,
                    chart=chart, facts=facts, seconds=time.monotonic() - started, input_tokens=tokens_in,
                    output_tokens=tokens_out)
 

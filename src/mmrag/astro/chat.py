@@ -80,11 +80,39 @@ def _chart_table(reading: Reading) -> str:
     return table
 
 
+def _reply(settings: Settings, d: BirthDetails, question: str | None, intro: str, table: bool,
+           reading_fn: Callable[..., Reading] | None) -> dict:
+    """Compute the chart for `d`, have the writer answer `question` (a full reading when None), and lay it out."""
+    try:
+        chart = compute_chart(parse_birth(d.date, d.time, d.timezone, d.latitude, d.longitude, d.name, d.place))
+    except ChartInputError as e:
+        return {"blocks": [_text(f"I could not calculate the chart: {e}.")], "notices": [], "sources": []}
+    writer = "astro" if settings.secrets.writer_base_url and settings.secrets.writer_api_key else "openai"
+    reading = (reading_fn or write_reading)(settings, chart, question=question, writer=writer)
+    who = f"**{d.name}**, born" if d.name else "Born"
+    used = intro.format(who=who, when=f"{chart.birth.when_local:%d %B %Y at %H:%M}",
+                        where=f"{d.place} ({d.latitude:.2f}°, {d.longitude:.2f}°, {d.timezone})")
+    blocks = [_text(used)] + ([_text(_chart_table(reading))] if table else [])
+    # A follow-up shows only the new answer: the chart overview, key factors and coming periods are already on
+    # screen from the first reading in this conversation, and repeating them made every answer look the same.
+    shown = reading.text if table or not reading.body else reading.body
+    blocks.append(_text(shown or "_(the model returned no text)_"))
+    if reading.cited:
+        blocks.append(_text("**Sources**  \n" + "  \n".join(
+            f"[{p.n}] {p.source_file}, page {', '.join(str(x) for x in p.pages)}" for p in reading.cited)))
+    blocks.append(_text(f"_Chart calculated by software; reading written by {reading.model} in "
+                        f"{reading.seconds:.0f} s._"))
+    return {"blocks": blocks, "notices": list(reading.notices), "sources": []}
+
+
 def chart_reply(settings: Settings, message: str,
                 extract: Callable[[Settings, str], BirthDetails] | None = None,
-                reading_fn: Callable[..., Reading] | None = None) -> dict | None:
+                reading_fn: Callable[..., Reading] | None = None,
+                on_details: Callable[[BirthDetails], None] | None = None) -> dict | None:
     """An answer (the chat's answer format) for a message carrying the asker's birth details, or None
-    when the message is not about their own chart and the document agent should answer it."""
+    when the message is not about their own chart and the document agent should answer it.
+    `on_details` receives the birth details once a chart has been computed from them, so the chat can
+    answer follow-up questions in the same conversation (`followup_reply`)."""
     if not asks_about_own_chart(message):
         return None
     d = (extract or extract_birth_details)(settings, message)
@@ -98,19 +126,17 @@ def chart_reply(settings: Settings, message: str,
             f"To read your chart I also need {' and '.join(missing)}. The birth time decides the Lagna and the "
             "houses, so a reading without it would be wrong. Please send all of it in one message, for example: "
             "*born 10-04-1981 at 12:30 PM in Vaishali, Bihar*.")], "notices": [], "sources": []}
-    try:
-        chart = compute_chart(parse_birth(d.date, d.time, d.timezone, d.latitude, d.longitude, d.name, d.place))
-    except ChartInputError as e:
-        return {"blocks": [_text(f"I could not calculate the chart: {e}.")], "notices": [], "sources": []}
-    writer = "astro" if settings.secrets.writer_base_url and settings.secrets.writer_api_key else "openai"
-    reading = (reading_fn or write_reading)(settings, chart, question=d.question, writer=writer)
-    who = f"**{d.name}**, born" if d.name else "Born"
-    used = (f"{who} {chart.birth.when_local:%d %B %Y at %H:%M} in {d.place} ({d.latitude:.2f}°, "
-            f"{d.longitude:.2f}°, {d.timezone}). If any of this is wrong, send all the details again, corrected.")
-    blocks = [_text(used), _text(_chart_table(reading)), _text(reading.text or "_(the model returned no text)_")]
-    if reading.cited:
-        blocks.append(_text("**Sources**  \n" + "  \n".join(
-            f"[{p.n}] {p.source_file}, page {', '.join(str(x) for x in p.pages)}" for p in reading.cited)))
-    blocks.append(_text(f"_Chart calculated by software; reading written by {reading.model} in "
-                        f"{reading.seconds:.0f} s._"))
-    return {"blocks": blocks, "notices": list(reading.notices), "sources": []}
+    answer = _reply(settings, d, d.question, "{who} {when} in {where}. If any of this is wrong, send all the "
+                    "details again, corrected.", table=True, reading_fn=reading_fn)
+    if on_details is not None and len(answer["blocks"]) > 1:  # the chart was computed
+        on_details(d)
+    return answer
+
+
+def followup_reply(settings: Settings, message: str, details: BirthDetails,
+                   reading_fn: Callable[..., Reading] | None = None) -> dict:
+    """An answer to a follow-up question ('In which field should I make my career?') from the chart read
+    earlier in the same conversation, so the asker need not repeat their birth details."""
+    return _reply(settings, details, message, "Answering from the chart read earlier in this conversation: "
+                  "{who} {when} in {where}. To read a different chart, send the new birth details or start a "
+                  "new conversation.", table=False, reading_fn=reading_fn)

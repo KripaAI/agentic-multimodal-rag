@@ -25,7 +25,7 @@ def main() -> None:
     parser.add_argument("--max-tokens", type=int, default=600)
     args = parser.parse_args()
     load_dotenv(HERE.parents[1] / ".env")
-    body = {"model": "astro-v2-8b", "temperature": 0.3, "max_tokens": args.max_tokens,
+    body = {"model": "astro-v4-8b", "temperature": 0.3, "max_tokens": args.max_tokens,
             "messages": [{"role": "system", "content": (HERE / "system_v1.txt").read_text(encoding="utf-8")},
                          {"role": "user", "content": args.question}]}
     req = urllib.request.Request(args.url.rstrip("/") + "/v1/chat/completions", data=json.dumps(body).encode(),

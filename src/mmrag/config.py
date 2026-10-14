@@ -180,7 +180,7 @@ class Writer(_Section):
     OpenAI-compatible server (llama-server on Modal), at WRITER_BASE_URL with WRITER_API_KEY from .env.
     It only writes: the chart is computed by code and the passages come from the library."""
 
-    model: str = "astro-v2-8b"            # the server's model alias
+    model: str = "astro-v4-8b"            # the server's model alias (v2 until 2026-10-13)
     system_prompt_file: Path = Path("deploy/modal/system_v1.txt")  # the prompt it was trained with
     max_tokens: int = Field(default=1800, gt=0)
     temperature: float = Field(default=0.3, ge=0, le=2)

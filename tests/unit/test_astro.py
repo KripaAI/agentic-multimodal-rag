@@ -162,6 +162,29 @@ def test_a_single_question_gets_more_than_three_passages(settings):
 
 
 @needs_ephemeris
+def test_a_career_answer_gets_the_10th_house_facts_and_is_repaired_without_them(settings):
+    """Review 2026-10-13: a career answer for a child built on the 5th house and never looked at the 10th."""
+    chart = natal.compute_chart(parse_birth("2020-04-20", "16:46", "Asia/Kolkata", 28.61, 77.21))
+    calls = []
+    replies = ["**Answer**\nA bright, curious child.\n\n**Why the chart says this**\nThe 5th house is strong.",
+               "**Answer**\nA bright, curious child.\n\n**Why the chart says this**\nThe 10th house is Gemini, "
+               "with Rahu; its lord Mercury sits in the 7th."]
+
+    def write(messages):
+        calls.append(messages)
+        return Written(text=replies[len(calls) - 1], model="fake")
+
+    r = write_reading(settings, chart, question="How will his career be?", write=write, use_books=False,
+                      on=date(2026, 10, 13))
+    first_request = calls[0][-1]["content"]
+    assert "**Career factors**" in first_request and "begin with the 10th house and its lord" in first_request
+    assert "describe aptitudes and interests to notice and nurture" in first_request  # he is six
+    assert len(calls) == 2 and "does not discuss the 10th house" in calls[1][-1]["content"]
+    assert r.body.startswith("**Career factors** _(calculated by software)_") and "The 10th house is Gemini" in r.body
+    assert not any("does not discuss the 10th house" in n for n in r.notices)
+
+
+@needs_ephemeris
 def test_a_reading_gives_the_writer_facts_and_passages_then_checks_and_repairs_it(settings):
     chart = natal.compute_chart(parse_birth("1869-10-02", "07:12", "+04:38", 21.6417, 69.6293))
     calls = []
@@ -178,7 +201,7 @@ def test_a_reading_gives_the_writer_facts_and_passages_then_checks_and_repairs_i
     system, user = calls[0][0]["content"], calls[0][1]["content"]
     assert "Jyotishi" in system  # the training prompt
     assert "Lagna (Ascendant): Libra" in user and "[P1]" in user and "never recalculate" in user
-    assert "Do not write those two sections again" in user and "**Key factors**" in user
+    assert "Do not write those sections again" in user and "**Key factors**" in user
     # the repair turn saw the first answer and the flagged sentence
     assert len(calls) == 2 and calls[1][-2]["role"] == "assistant" and "Saturn in the 7th house" in calls[1][-1]["content"]
     assert r.text.startswith("**Chart overview** _(calculated by software)_")
@@ -340,3 +363,104 @@ def test_birth_details_in_the_chat_get_a_chart_reading(settings):
     assert chart_reply(settings, "What does Saturn in the 7th house give?", extract=None) is None
     no_date = BirthDetails()
     assert chart_reply(settings, "what is my lagna", extract=lambda s, m: no_date) is None
+
+
+@needs_ephemeris
+def test_coming_periods_name_the_next_mahadasha():
+    """Review 2026-10-13: the writer called the Mercury mahadasha from 2027 'the Mercury sub-period'."""
+    from datetime import date
+
+    from mmrag.astro.compose import coming_periods, factual_sections
+    from mmrag.astro.natal import parse_birth
+
+    chart = natal.compute_chart(parse_birth("1981-04-10", "12:30", "Asia/Kolkata", 25.68, 85.22))
+    text = coming_periods(chart, date(2026, 10, 13))
+    assert "in its Jupiter sub-period (antardasha) until March 2027" in text
+    assert "The Jupiter sub-period is the last one of the Saturn mahadasha." in text
+    assert "Next mahadasha: Mercury, March 2027 to March 2044 (17 years)" in text
+    assert "Mercury rules the 3rd and 12th and sits in Pisces in the 9th house" in text
+    assert "debilitated, with the debility cancelled" in text and "After that: Ketu mahadasha" in text
+    early = coming_periods(chart, date(2015, 1, 1))  # mid-mahadasha: the sub-periods still to come are listed
+    assert "in its Ketu sub-period" in early and "Sub-periods still to come in the Saturn mahadasha: Venus" in early
+    shown = factual_sections(chart, date(2026, 10, 13))
+    assert "**Coming periods**" in shown
+    assert "- Note: Kemadruma is present but cancelled" in shown and "Strength: Kemadruma" not in shown
+
+
+@needs_ephemeris
+def test_checks_catch_lords_yoga_owners_pronoun_dignities_and_misnamed_periods():
+    """The wrong sentences from two v4 answers for this chart (2026-10-13), and right ones that must pass."""
+    from mmrag.astro.natal import parse_birth
+    from mmrag.astro.reading import check_analysis, check_positions
+
+    chart = natal.compute_chart(parse_birth("1981-04-10", "12:30", "Asia/Kolkata", 25.68, 85.22))
+
+    def flags(t):
+        return check_positions(t, chart) + check_analysis(t, chart)
+
+    assert "lord of the 3rd; it rules the 7th and 8th" in " ".join(flags(
+        "Saturn is the 3rd lord joined with Jupiter, the 9th lord."))
+    assert "credits Venus with Gajakesari yoga" in " ".join(flags(
+        "For your chart this fits Venus well: it is exalted there (Vargottama) and forms Gajakesari with Jupiter."))
+    assert "calls Mercury in its own sign; in the chart it is debilitated" in " ".join(flags(
+        "For a Cancer Lagna, Mercury rules the 3rd and 12th houses, so it sits in its own sign there."))
+    assert "calls the Mercury mahadasha (March 2027 to March 2044) a sub-period" in " ".join(flags(
+        "The Mercury antardasha follows from March 2027 until the end of its own period in 2044."))
+    from mmrag.astro.reading import remove_flagged_sentences
+
+    two = "The Sun is the natural karaka for authority. It sits in its own sign. Venus is exalted in Pisces."
+    found = " ".join(flags(two))  # the claim is in the sentence after the name
+    assert "calls Sun" in found and "own sign" in found
+    kept, removed = remove_flagged_sentences(two, chart)
+    assert kept == "The Sun is the natural karaka for authority. Venus is exalted in Pisces." and len(removed) == 1
+    for ok in ("Saturn is the 7th and 8th lord, placed in the 3rd.", "Saturn is lord of the 7th and 8th.",
+               "Jupiter in the 4th from the Moon forms Gajakesari.", "Venus is exalted in Pisces, and it is Vargottama.",
+               "Mercury is debilitated, but it is exalted in the Navamsa.",
+               "The Mercury mahadasha begins in March 2027 and runs until 2044.",
+               "The Rahu sub-period (2021 to 2024) brought changes.", "Sun and Mercury form Budha-Aditya yoga."):
+        assert flags(ok) == [], ok
+
+
+def test_personal_follow_up_questions_are_recognised():
+    from mmrag.astro.reading import asks_personal_followup
+
+    for q in ("In which field i shouls make career", "Will I get married soon?", "what about marriage?",
+              "and my health?", "Which gemstone should I wear?", "what is my lagna", "When will my job change?"):
+        assert asks_personal_followup(q), q
+    for q in ("What does Saturn in the 7th house give?", "Which charts in the books have Mars in Leo?",
+              "Explain Gajakesari yoga", "thanks", "I see"):
+        assert not asks_personal_followup(q), q
+
+
+@needs_ephemeris
+def test_follow_ups_use_the_chart_read_earlier_in_the_conversation(settings):
+    from mmrag.astro.chat import BirthDetails, chart_reply, followup_reply
+    from mmrag.astro.reading import Reading
+
+    full = BirthDetails(name="Kripa", date="1981-04-10", time="12:30", place="Vaishali, Bihar", latitude=25.68,
+                        longitude=85.21, timezone="Asia/Kolkata", question="future")
+    seen = []
+
+    def reading_fn(s, chart, question=None, writer="astro"):
+        seen.append(question)
+        return Reading(text="**Chart overview** _(calculated by software)_\nSame as before.\n\nAn answer.",
+                       body="An answer.", model="fake", passages=[], cited=[], notices=[], chart=chart)
+
+    kept = []
+    msg = "My date of birth is 10-04-1981, born in vaishali at 12:30 PM. My future?"
+    chart_reply(settings, msg, extract=lambda s, m: full, reading_fn=reading_fn, on_details=kept.append)
+    assert kept == [full]  # the chat keeps these for the conversation
+
+    no_time = full.model_copy(update={"time": None})  # no chart computed: nothing kept
+    chart_reply(settings, msg, extract=lambda s, m: no_time, reading_fn=reading_fn, on_details=kept.append)
+    assert kept == [full]
+
+    answer = followup_reply(settings, "In which field should I make my career?", kept[0], reading_fn=reading_fn)
+    text = "\n".join(b["content"]["markdown"] for b in answer["blocks"])
+    assert seen[-1] == "In which field should I make my career?"
+    assert "chart read earlier in this conversation" in text and "10 April 1981 at 12:30" in text
+    assert "An answer." in text and "| Lagna |" not in text  # the chart table is not repeated
+    assert "Chart overview" not in text and "Same as before." not in text  # nor the code-written sections
+
+    first = chart_reply(settings, msg, extract=lambda s, m: full, reading_fn=reading_fn)  # the first reading shows them
+    assert "Chart overview" in "\n".join(b["content"]["markdown"] for b in first["blocks"])

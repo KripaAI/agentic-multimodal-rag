@@ -58,7 +58,8 @@ def test_neecha_bhanga_separates_classical_and_later_rules(child):
     jup, merc = nbs["Jupiter"], nbs["Mercury"]
     assert any("Moon, the lord of Cancer" in r for r in jup.classical)       # exaltation-sign lord in a kendra
     assert any("Saturn" in r for r in jup.later) and any("Mars" in r for r in jup.later)
-    assert merc.classical == []
+    # Mercury (debilitated in Pisces) rules Virgo, its own exaltation sign, and sits in the 7th, a kendra
+    assert merc.classical == ["Mercury itself, the lord of Virgo, its own exaltation sign: Mercury is in the 7th house, a kendra from the Lagna"]
 
 
 @needs_ephemeris
@@ -84,7 +85,8 @@ def test_facts_carry_the_analysis(child):
     assert "Age on 2026-10-12: 6 (child)." in facts
     assert "- Jupiter: Navamsa Capricorn (Vargottama) (debilitated in the Navamsa), debilitated" in facts
     assert "from Jupiter (Capricorn): Mars, Jupiter, Saturn in the 1st" in facts and "Venus in the 5th" in facts
-    assert "Classical cancellation (kendra rules, Phaladeepika): not met." in facts  # Mercury
+    # Mercury rules Virgo, its own exaltation sign, and sits in a kendra (review 2026-10-13; was "not met")
+    assert "Classical cancellation (kendra rules, Phaladeepika): Mercury itself, the lord of Virgo" in facts
 
 
 @needs_ephemeris
@@ -121,15 +123,14 @@ def test_rules_for_a_child_reading():
 
 @needs_ephemeris
 def test_a_cancellation_moved_to_the_wrong_planet_is_flagged(child):
-    """The second reading for the child (2026-10-12) gave Jupiter's cancelled debility to Mercury."""
+    """The second reading for the child (2026-10-12) said Mercury's debility is cancelled. Since the review of
+    2026-10-13 the software agrees (Mercury is its own exaltation lord, in a kendra), so only Venus is wrong."""
     stage = analysis.life_stage(child.birth.when_local.date(), ON)
     notes = check_analysis("Mercury is debilitated there, but its debility is cancelled by the classical rule. "
                            "Jupiter's debility is cancelled. Venus's debility is relieved.", child, stage)
-    assert len(notes) == 2
-    assert "Mercury's debility is cancelled; no rule cancels it" in notes[0]
-    assert "Venus is not debilitated" in notes[1]
+    assert len(notes) == 1 and "Venus is not debilitated" in notes[0]
     rules = reading_rules(stage, True, child)
-    assert "cancelled by a classical rule: Jupiter" in rules and "NOT cancelled: Mercury" in rules
+    assert "cancelled by a classical rule: Mercury, Jupiter" in rules and "NOT cancelled" not in rules
 
 
 @needs_ephemeris
@@ -282,3 +283,58 @@ def test_mars_as_significator_of_marriage_is_flagged(child):
     stage = analysis.life_stage(child.birth.when_local.date(), ON)
     notes = check_analysis("Mars, the natural karaka of marriage, is strong.", child, stage)
     assert notes and "Mars the significator of the marriage" in notes[0]
+
+
+@needs_ephemeris
+def test_review_2026_10_13_regressions(child):
+    """The failures a reviewer found in a v4 reading of this chart (a six-year-old, Virgo Lagna)."""
+    from mmrag.astro.reading import remove_flagged_sentences
+
+    stage = analysis.life_stage(date(2020, 4, 20), date(2026, 10, 13))
+    # Jupiter in Capricorn aspects Taurus, Cancer and Virgo, not Mercury in Pisces; "It" names Mercury
+    aspect = ("As Lagna lord, Mercury governs the child's speech. It is debilitated in Pisces but receives the aspect "
+              "of Jupiter, which protects it somewhat.")
+    assert "Mercury receives the aspect of Jupiter; it does not" in " ".join(check_analysis(aspect, child, stage))
+    kept, removed = remove_flagged_sentences(aspect, child, stage)
+    assert kept == "As Lagna lord, Mercury governs the child's speech." and len(removed) == 1
+    # the first mahadasha is only the balance at birth: Saturn 2020-2032 (12.4 years of 19) is right
+    assert check_positions("The Saturn mahadasha (2020-2032) runs now.", child) == []
+    assert child.dashas[0].lord == "Saturn" and child.dashas[0].end.year == 2032
+    # a dasha is not tied to starting school
+    school = "Mercury opens its own mahadasha in 2032. This is a natural time for formal schooling to begin."
+    assert "ties a period to starting school" in " ".join(check_analysis(school, child, stage))
+    assert check_analysis("He may enjoy school and books in these years.", child, stage) == []
+    assert "Do not tie a dasha or sub-period to starting school" in reading_rules(stage, False, child)
+
+
+@needs_ephemeris
+def test_career_factors_cover_the_10th_house_and_its_lord(child):
+    from mmrag.astro.compose import CAREER_QUESTION, career_factors
+
+    text = career_factors(child)
+    assert "The 10th house (career, work and public standing) is Gemini; it holds Rahu." in text
+    assert "Its lord: Mercury rules the 1st and 10th and sits in Pisces in the 7th house" in text
+    assert "Aspects on the 10th house: none" in text and "The 10th from the Moon is Sagittarius" in text
+    assert CAREER_QUESTION.search("How will his career be?") and CAREER_QUESTION.search("which field should I choose")
+    assert not CAREER_QUESTION.search("Will I get married?")
+
+
+@needs_ephemeris
+def test_benchmark_false_alarms_are_not_flagged(child):
+    """True sentences the checks wrongly flagged in the first 100-chart benchmark run (2026-10-14)."""
+    stage = analysis.life_stage(date(2020, 4, 20), date(2026, 10, 13))
+
+    def flags(t):
+        return check_positions(t, child) + check_analysis(t, child, stage)
+
+    # Navamsa dignities are not birth-chart dignities (Mars: exalted in the chart, debilitated in the Navamsa)
+    for ok in ("The chart lists Mars debilitated in the Navamsa, which is a mild point.", "Mars is debilitated in Navamsa.",
+               "Jupiter is Vargottama in the Navamsa. Mars is debilitated there too.",
+               "The chart does not show when the child starts school, so judge that by age."):
+        assert flags(ok) == [], ok
+    # "It also notes" is the software speaking, not the planet named in the sentence before
+    software = flags("The software lists Mercury as the Lagna lord. It also notes that the Sun is exalted in the Navamsa.")
+    assert not any("Mercury" in f for f in software)
+    # the same claims about the birth chart are still wrong
+    assert any("calls Mars debilitated" in f for f in flags("Mars is debilitated."))
+    assert any("calls Mars exalted in the Navamsa" in f for f in flags("Mars is exalted in the Navamsa."))
