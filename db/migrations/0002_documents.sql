@@ -71,7 +71,8 @@ CREATE TABLE search_chunks (
     element_ids     text[] NOT NULL,          -- in reading order
     dense_text      text NOT NULL,
     keyword_text    text NOT NULL,
-    embedding       vector(1536) NOT NULL,    -- = embed.dims; changing it needs a migration (spec §6.5)
+    embedding       vector({{embed_dims}}) NOT NULL,  -- embed.dims, filled in by `mmrag db migrate`; fixed once
+                                              -- created: another model with other dims needs another database (spec §6.5)
     embedding_model text NOT NULL,
     tsv_english     tsvector GENERATED ALWAYS AS (to_tsvector('english', keyword_text)) STORED,
     tsv_simple      tsvector GENERATED ALWAYS AS (to_tsvector('simple', keyword_text)) STORED

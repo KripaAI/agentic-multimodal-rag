@@ -16,3 +16,10 @@ def empty_dir(path: Path) -> Path:
         if item.is_file() or item.is_symlink():
             item.unlink()
     return path
+
+
+def jsonl_lines(path: Path) -> list[str]:
+    """The non-blank lines of a JSONL file. Split on "\\n" only: str.splitlines() also splits on
+    characters such as \\x85 and \\u2028, which JSON keeps unescaped inside strings, and so cut a
+    record in two (a PDF whose text contained \\x85 could not be indexed)."""
+    return [line for line in path.read_text(encoding="utf-8").split("\n") if line.strip()]

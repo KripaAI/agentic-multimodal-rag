@@ -9,10 +9,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
+from mmrag.fsutil import jsonl_lines
 from mmrag.config import Settings
 from mmrag.ingest.captions import CaptionRecord, load_records
 from mmrag.ingest.ids import doc_id as compute_doc_id
 from mmrag.ingest.models import Element, Table
+from mmrag.ingest.charts import chart_records
+from mmrag.ingest.transcripts import load_transcripts
 
 
 class Link(BaseModel):
@@ -34,12 +37,18 @@ class LoadedDoc:
     elements: list[Element]  # reading order
     tables: dict[str, Table] = field(default_factory=dict)
     captions: dict[str, CaptionRecord] = field(default_factory=dict)
+    transcribed: set[str] = field(default_factory=set)  # scanned pages whose text the VLM transcribed
+    chart_text: dict[str, str] = field(default_factory=dict)  # figure -> planet placements read off the chart
+    charts: dict[str, list[dict]] = field(default_factory=dict)  # figure -> its charts (kind, lagna, placements)
 
     def texts(self) -> list[Element]:
-        return [e for e in self.elements if e.type == "text" and e.status == "ok" and e.text]
+        """Paragraphs, and transcribed scanned pages: each is one block of text citing its whole page."""
+        return [e for e in self.elements if e.status == "ok" and e.text
+                and (e.type == "text" or e.element_id in self.transcribed)]
 
     def figures(self) -> list[Element]:
-        return [e for e in self.elements if e.type in ("vector_figure", "image", "scanned_page") and e.status == "ok"]
+        return [e for e in self.elements if e.type in ("vector_figure", "image", "scanned_page") and e.status == "ok"
+                and e.element_id not in self.transcribed]
 
     def table_elements(self) -> list[Element]:
         return [e for e in self.elements if e.type == "table" and e.element_id in self.tables]
@@ -53,19 +62,38 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def load_document(pdf: Path, settings: Settings) -> LoadedDoc:
-    """Read elements, tables and captions written by `ingest parse` and `caption import`."""
-    did = compute_doc_id(pdf)
+def _charts(path: Path, elements: list[Element]) -> dict[str, dict]:
+    """Charts read off figures (`mmrag charts read`), for figures whose image is still the one read."""
+    hashes = {e.element_id: e.content_hash for e in elements}
+    return {eid: r for eid, r in chart_records(path).items() if hashes.get(eid) == r["image_hash"]}
+
+
+def load_document(pdf: Path, settings: Settings, ids: tuple[str, str] | None = None) -> LoadedDoc:
+    """Read elements, tables and captions written by `ingest parse` and `caption import`. `ids`
+    (doc_id, sha256) stands in for reading the PDF when only its parse outputs are at hand."""
+    did = ids[0] if ids else compute_doc_id(pdf)
     data = settings.resolve(settings.paths.data_dir)
     el_file = data / "elements" / did / "elements.jsonl"
     if not el_file.is_file():
         raise FileNotFoundError(f"no parse output for {pdf.name}; run `mmrag ingest parse {pdf.name}` first")
-    elements = [Element.model_validate_json(x) for x in el_file.read_text(encoding="utf-8").splitlines() if x]
+    elements = [Element.model_validate_json(x) for x in jsonl_lines(el_file) if x]
     elements.sort(key=lambda e: (e.page, e.bbox[1], e.bbox[0]))
     tab_file = data / "tables" / did / "tables.jsonl"
-    tables = [Table.model_validate_json(x) for x in tab_file.read_text(encoding="utf-8").splitlines() if x] \
+    tables = [Table.model_validate_json(x) for x in jsonl_lines(tab_file) if x] \
         if tab_file.is_file() else []
     cap_file = data / "captions" / did / "captions.jsonl"
     captions = load_records(cap_file)[0] if cap_file.is_file() else []
-    return LoadedDoc(doc_id=did, source_file=pdf.name, content_hash=_sha256(pdf), elements=elements,
-                     tables={t.element_id: t for t in tables}, captions={c.element_id: c for c in captions})
+    # A transcript replaces a scanned page's few stray characters, if it was made from this very image.
+    transcripts = load_transcripts(data / "captions" / did / "transcripts.jsonl")
+    charts = _charts(data / "captions" / did / "charts.jsonl", elements)
+    transcribed = set()
+    for i, e in enumerate(elements):
+        t = transcripts.get(e.element_id)
+        if e.type == "scanned_page" and t and t.image_hash == e.content_hash:
+            elements[i] = e.model_copy(update={"text": t.text})
+            transcribed.add(e.element_id)
+    return LoadedDoc(doc_id=did, source_file=pdf.name, content_hash=ids[1] if ids else _sha256(pdf), elements=elements,
+                     tables={t.element_id: t for t in tables}, captions={c.element_id: c for c in captions},
+                     transcribed=transcribed,
+                     chart_text={eid: r["text"] for eid, r in charts.items() if r.get("text")},
+                     charts={eid: r["charts"] for eid, r in charts.items() if r.get("charts")})

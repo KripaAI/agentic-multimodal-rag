@@ -124,6 +124,87 @@ mmrag memory summarize <email>                # summarise finished conversations
 
 Settings are under `memory` in `config.yaml`; `memory.enabled: false` switches it off for everyone. Operations are in [docs/07-operations.md](docs/07-operations.md) §9.
 
+## Trying another embedding model (Phase 10)
+
+Documents and questions must be embedded by the same model, and vectors from two models cannot be
+compared. So an experiment gets **its own database** on the same server, and its own config file
+that holds only what differs from `config.yaml`. The parsed PDFs and figure captions are reused:
+only `ingest index` runs again. The production database is never touched.
+
+`config.gemma.yaml` tries [EmbeddingGemma 2](https://huggingface.co/google/embeddinggemma-2), an
+open model that runs on the CPU (text only, 768 dims), in a database called `mmrag_gemma`:
+
+```powershell
+.venv\Scripts\python -m pip install torch torchvision --index-url https://download.pytorch.org/whl/cpu
+.venv\Scripts\python -m pip install -r requirements-local-embed.txt
+$env:MMRAG_CONFIG = "config.gemma.yaml"       # this shell only; every mmrag command now uses it
+mmrag db create                               # creates mmrag_gemma
+mmrag db migrate                              # builds vector(768) columns from embed.dims
+mmrag check                                   # loads the model (downloaded once, ~1 GB) and checks dims
+mmrag ingest index file.pdf                   # for each PDF
+Remove-Item Env:MMRAG_CONFIG                  # back to config.yaml
+```
+
+In Docker: `LOCAL_EMBED=1 docker compose --profile tools build ingest`, then
+`docker compose run --rm -e MMRAG_CONFIG=config.gemma.yaml ingest ingest index "file.pdf"`.
+
+A config is refused against a database whose vectors are another size, so the two cannot be mixed
+by mistake. The evaluation judge keeps its own embedding model (`eval.judge_embed_model`), so scores
+from both databases are comparable. Keep only what measurably helps (P10); `DROP DATABASE
+mmrag_gemma` removes the experiment.
+
+## Embedding on a Kaggle GPU
+
+A local embedding model on a laptop CPU is slow (EmbeddingGemma 2: under one chunk a second on a
+2-core laptop). Kaggle's free T4 runs the same model about 20× faster. Only the embedding moves:
+PostgreSQL, the PDFs and the app stay on the laptop.
+
+```powershell
+mmrag embed bundle [pdf ...]      # parse outputs + code + config (no PDFs); table summaries made here first
+mmrag embed push                  # starts `mmrag ingest index --no-db` on a Kaggle GPU
+mmrag embed status
+mmrag embed pull                  # the vectors it computed
+mmrag embed import --index        # merge them into data/cache/embeddings/, then index: database writes only
+```
+
+The Kaggle job runs this project's own `ingest index --no-db`, so it embeds exactly the texts a local run
+would; `import` only adds vectors the local cache lacks and never replaces it. Uses `KAGGLE_API_TOKEN`
+and `caption.kaggle_username`, like captioning. `mmrag ingest index --no-db` also works locally.
+
+## Birth-chart readings by the fine-tuned model (Phase 11)
+
+The chart is computed by code: sidereal positions from NASA JPL's DE440s ephemeris (Skyfield), the
+Lahiri ayanamsa, whole-sign houses, nakshatras, dignities, combustion and Vimshottari dashas. The
+fine-tuned model [astro-v2-8b](https://huggingface.co/iamaigeek/astro-v2-8b-gguf) only *writes*. It
+gets the chart facts and numbered passages from the library, which it cites as [P3]. Code then
+drops citations to passages it was not given, and flags any planet position in the text that the
+chart contradicts. The chat agent stays on `agent.model`.
+
+The model runs on Modal ([deploy/modal/astro_llm.py](deploy/modal/astro_llm.py)). Point the app at it in `.env`:
+
+```
+WRITER_BASE_URL=https://<workspace>--astro-llm-serve.modal.run/v1
+WRITER_API_KEY=<the key in the Modal secret astro-llm-key>
+MMRAG_EPHEMERIS_DIR=<folder for the 32 MB ephemeris; default data/ephemeris>
+```
+
+```powershell
+$env:MMRAG_CONFIG = "config.astro.yaml"
+mmrag astro chart   --date 1990-05-17 --time 14:30 --tz Asia/Kolkata --lat 28.6139 --lon 77.2090
+mmrag astro reading --date 1990-05-17 --time 14:30 --tz Asia/Kolkata --lat 28.6139 --lon 77.2090 [--question "..."]
+mmrag astro reading ... --writer openai          # the same reading by agent.model, to compare
+mmrag astro ask "What does Saturn in the 7th house give?" [--no-books] [--writer openai]
+```
+
+**Judging the readings with Gemini.** `mmrag astro judge` writes the cases in
+[eval/astro_cases.yaml](eval/astro_cases.yaml) (every life stage, plus safety probes) and has Gemini review
+each reading against the computed chart facts and the passages the writer saw. It lists each error
+with a quote and scores six criteria from 1 to 5. It needs `GEMINI_API_KEY` in `.env` and uses `gemini-flash-latest` (Pro models have no free quota). Add
+`--writer both` to compare with `agent.model`. The report goes to `data/eval/astro/`.
+
+In the chat app, **🪐 Birth chart reading** in the sidebar does the same. The first reading after a
+pause also starts the GPU, which takes a minute or two. The GPU stops 5 minutes after the last request.
+
 ## Tests
 
 Development is test-driven where it fits (constitution W5, LLD §10). Install the test tools with `pip install -r requirements-dev.txt`.

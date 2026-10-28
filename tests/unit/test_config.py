@@ -69,3 +69,47 @@ def test_relative_paths_resolve_to_project_root(base_config, write_config):
 def test_project_config_is_valid():
     """The committed config.yaml itself must always validate."""
     load_settings(PROJECT_ROOT / "config.yaml", UNIT_ENV)
+
+
+# ---------------------------------------------------------------- Phase 10: experiment configs
+
+def test_gemma_config_extends_the_project_config():
+    s = load_settings(PROJECT_ROOT / "config.gemma.yaml", UNIT_ENV)
+    base = load_settings(PROJECT_ROOT / "config.yaml", UNIT_ENV)
+    assert (s.embed.provider, s.embed.model, s.embed.dims) == ("local", "google/embeddinggemma-2", 768)
+    assert s.agent == base.agent and s.search == base.search  # everything else is inherited
+    assert s.secrets.database_url.get_secret_value() == "postgresql://user:pw@localhost:5433/mmrag_gemma"
+
+
+def test_extends_merges_sections_key_by_key(tmp_path, base_config, write_config):
+    write_config(base_config)  # tmp_path/config.yaml
+    child = tmp_path / "child.yaml"
+    child.write_text("extends: config.yaml\nembed:\n  dims: 256\n", encoding="utf-8")
+    s = load_settings(child, UNIT_ENV)
+    assert s.embed.dims == 256 and s.embed.model == base_config["embed"]["model"]
+
+
+def test_extends_loop_rejected(tmp_path):
+    (tmp_path / "a.yaml").write_text("extends: b.yaml\n", encoding="utf-8")
+    (tmp_path / "b.yaml").write_text("extends: a.yaml\n", encoding="utf-8")
+    with pytest.raises(ConfigError, match="loop"):
+        load_settings(tmp_path / "a.yaml", UNIT_ENV)
+
+
+def test_database_name_replaces_only_the_name(base_config, write_config):
+    base_config["database_name"] = "mmrag_other"
+    env = {"DATABASE_URL": "postgresql://user:pw@db.example:5433/mmrag?sslmode=require"}
+    s = load_settings(write_config(base_config), env)
+    assert s.secrets.database_url.get_secret_value() == "postgresql://user:pw@db.example:5433/mmrag_other?sslmode=require"
+
+
+def test_unsafe_database_name_rejected(base_config, write_config):
+    base_config["database_name"] = "x; DROP DATABASE mmrag"
+    with pytest.raises(ConfigError):
+        load_settings(write_config(base_config), UNIT_ENV)
+
+
+def test_judge_embedding_does_not_follow_retrieval(base_config, write_config):
+    base_config["embed"].update(provider="local", model="google/embeddinggemma-2", dims=768)
+    s = load_settings(write_config(base_config), UNIT_ENV)
+    assert (s.eval.judge_embed_model, s.eval.judge_embed_dims) == ("text-embedding-3-large", 1536)

@@ -32,7 +32,16 @@ def build_hash(doc: LoadedDoc, chunks: list[Chunk], links: list[Link], embedding
         "links": [lk.model_dump() for lk in links],
         "embedding_model": embedding_model,
     }
+    if doc.charts:  # only when there are any, so documents without charts keep their hash
+        payload["charts"] = doc.charts
     return hashlib.sha256(json.dumps(payload, sort_keys=True, ensure_ascii=False).encode("utf-8")).hexdigest()
+
+
+def _house(lagna: str | None, sign: str) -> int | None:
+    """House of a sign counted from the Lagna's sign (1 = the Lagna's own); None without a Lagna."""
+    from mmrag.ingest.charts import SIGNS
+
+    return (SIGNS.index(sign) - SIGNS.index(lagna)) % 12 + 1 if lagna else None
 
 
 def write_document(settings: Settings, doc: LoadedDoc, chunks: list[Chunk], vectors: list[list[float]],
@@ -77,6 +86,12 @@ def write_document(settings: Settings, doc: LoadedDoc, chunks: list[Chunk], vect
                 "low_confidence) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
                 [(t.element_id, Jsonb(t.columns), Jsonb(t.rows), Jsonb(t.units), t.numeric_columns, t.title,
                   t.summary, t.low_confidence) for t in doc.tables.values() if t.element_id in known])
+            cur.executemany(
+                "INSERT INTO chart_placements (element_id, chart_no, kind, lagna, body, sign, house) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s)",
+                [(eid, n, c["kind"], c["lagna"], body, sign, _house(c["lagna"], sign))
+                 for eid, charts in doc.charts.items() if eid in known
+                 for n, c in enumerate(charts, 1) for body, sign in c["placements"].items()])
             cur.executemany(
                 "INSERT INTO element_links (target_id, text_element_id, method, score) VALUES (%s,%s,%s,%s)",
                 [(lk.target_id, lk.text_element_id, lk.method, lk.score) for lk in links])

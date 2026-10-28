@@ -352,7 +352,7 @@ STEP_LABELS = {"plan": "Understanding the question", "compose": "Writing the ans
                "validate": "Checking the citations", "repair": "Fixing the citations",
                "give_up": "Removing unverified parts", "chart_nudge": "Checking whether a chart is needed"}
 TOOL_LABELS = {"search_text": "Searching the text", "search_figures": "Searching the figures",
-               "search_tables": "Searching the tables", "get_figure": "Reading a figure", "get_table": "Reading a table",
+               "search_tables": "Searching the tables", "find_charts": "Finding charts", "get_figure": "Reading a figure", "get_table": "Reading a table",
                "view_page": "Looking at a page", "compute": "Calculating", "make_chart": "Drawing a chart"}
 
 
@@ -420,10 +420,14 @@ def run_query(question: str, settings: Settings, thread_id: str | None = None,
     from mmrag.agent.validator import DbStore
     from mmrag.llm import get_client
     from mmrag.obs.querylog import cost_usd, log_query
-    from mmrag.retrieval.hybrid import _default_embedder
+    from mmrag.retrieval.hybrid import _default_embedder, warm_up
 
     thread_id = thread_id or uuid.uuid4().hex[:12]
     model = model or (llm.model if llm else settings.agent.model)
+    if embed_query is None:
+        # Load a local query embedder before the agent starts: loading takes 30-90 s on a laptop CPU,
+        # and inside a search tool it ran into the 30 s tool timeout, so the first search failed.
+        warm_up(settings)
     run_dir = settings.resolve(settings.paths.data_dir) / "answers" / "charts" / thread_id
     deps = AgentDeps(settings=settings, llm=llm or OpenAILLM(get_client(settings), model, settings.agent.effort),
                      store=DbStore(settings), embed_query=embed_query or _default_embedder(settings), chart_dir=run_dir)

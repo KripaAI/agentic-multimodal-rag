@@ -1,5 +1,8 @@
 """VLM figure captioning job (LLD §3.4, spec §6.2). Runs on Kaggle/Colab, not locally.
 
+Two tasks, chosen by run.json's "task": "caption" (default) describes figures as JSON;
+"transcribe" copies the text of scanned pages as plain text (transcripts.jsonl).
+
 Standalone on purpose: it imports nothing from `mmrag`, so a bare GPU notebook can run
 it. The bundle (a Kaggle dataset) holds jobs.jsonl, images/, the prompt and run.json.
 
@@ -85,15 +88,27 @@ MODELS = {
     "awq-7b": "Qwen/Qwen2.5-VL-7B-Instruct-AWQ",
     "nf4-7b": "Qwen/Qwen2.5-VL-7B-Instruct",
     "3b": "Qwen/Qwen2.5-VL-3B-Instruct",
+    # Classic OCR, CPU only, transcription only: for printed scripts the VLM reads poorly. In the
+    # Phase 10 pilot Qwen2.5-VL dropped 3 of 10 Hindi pages and confused ग्रह with घर.
+    "tesseract": "tesseract-ocr hin+eng",
 }
+CPU_ONLY = {"tesseract"}
 MAX_NEW_TOKENS = 2048
 # Used only when retrying a failed figure. Pilot v2: applied to every figure, it blanked
 # table cells whose text was already in visible_text; pilot v3: without it, an identical
 # retry repeats an identical loop.
 RETRY_REPETITION_PENALTY = 1.05
 MIN_PIXELS = 256 * 28 * 28
+# Transcription: a full book page is roughly 600-1,200 tokens of text; the limit leaves room
+# for dense pages while max_model_len (8192) still fits the page image's visual tokens.
+TRANSCRIBE_MAX_TOKENS = 4096
 
 # ---------------------------------------------------------------- prompt and parsing
+
+
+def jsonl_lines(path: Path) -> list[str]:
+    """Non-blank lines, split on "\\n" only: str.splitlines() also splits on \\x85 inside JSON strings."""
+    return [line for line in path.read_text(encoding="utf-8").split("\n") if line.strip()]
 
 
 def build_prompt(template: str, job: dict) -> str:
@@ -132,6 +147,20 @@ def parse_caption(raw: str) -> tuple[dict | None, str | None]:
     return None, error
 
 
+def build_page_prompt(template: str, job: dict) -> str:
+    return template.format(source_file=job["source_file"], page=job["page"])
+
+
+def transcript_status(text: str, finish_reason: str | None) -> tuple[str, str | None]:
+    """ok, or needs_review with the reason: empty output, or cut off at the token limit
+    (a dense page, or a model stuck repeating a line)."""
+    if not text.strip():
+        return "needs_review", "empty reply"
+    if finish_reason == "length":
+        return "needs_review", "stopped at the token limit"
+    return "ok", None
+
+
 # ---------------------------------------------------------------- the run loop
 
 
@@ -168,11 +197,58 @@ def run_jobs(jobs, backend, bundle: Path, out: Path, model_path: str, prompt_ver
                 d.write(job["element_id"] + "\n")
         print(f"[{model_path}] {min(i + batch_size, len(todo))}/{len(todo)} done", flush=True)
 
-    records = [json.loads(line) for line in (out / "captions.jsonl").read_text(encoding="utf-8").splitlines()]
+    records = [json.loads(line) for line in jsonl_lines(out / "captions.jsonl")]
     ok = sum(r["status"] == "ok" for r in records)
     report = {
         "model_path": model_path, "model_id": backend.model_id, "prompt_version": prompt_version,
         "jobs": len(records), "ok": ok, "needs_review": len(records) - ok,
+        "validity_rate": ok / len(records) if records else 0.0,
+        "seconds_this_run": round(time.monotonic() - started, 1),
+        "seconds_per_figure": round(sum(r["seconds"] for r in records) / len(records), 2) if records else 0.0,
+        "gpu_memory_mb": gpu_memory_mb(),
+    }
+    (out / "run_report.json").write_text(json.dumps(report, indent=1) + "\n", encoding="utf-8")
+    return report
+
+
+def run_transcribe(jobs, backend, bundle: Path, out: Path, model_path: str, prompt_version: str, template: str,
+                   batch_size: int = 4) -> dict:
+    """Transcribe every page not already in out/done_ids.txt. A page cut off at the token limit
+    is retried once with a repetition penalty; if it still fails it is kept as needs_review."""
+    out.mkdir(parents=True, exist_ok=True)
+    done_file = out / "done_ids.txt"
+    done = set(done_file.read_text(encoding="utf-8").split()) if done_file.is_file() else set()
+    todo = [j for j in jobs if j["element_id"] not in done]
+    started = time.monotonic()
+
+    for i in range(0, len(todo), batch_size):
+        batch = todo[i:i + batch_size]
+        items = [(j, build_page_prompt(template, j), bundle / j["image"]) for j in batch]
+        t0 = time.monotonic()
+        replies = backend.generate(items)
+        checked = [transcript_status(r, f) for r, f in zip(replies, backend.last_finish)]
+        retry = [k for k, (st, _) in enumerate(checked) if st != "ok"]
+        if retry:
+            for k, raw in zip(retry, backend.generate([items[k] for k in retry], retry=True)):
+                replies[k] = raw
+            for k, f in zip(retry, backend.last_finish):
+                checked[k] = transcript_status(replies[k], f)
+        per_item = (time.monotonic() - t0) / len(batch)
+        with (out / "transcripts.jsonl").open("a", encoding="utf-8") as f, done_file.open("a", encoding="utf-8") as d:
+            for job, text, (st, err) in zip(batch, replies, checked):
+                f.write(json.dumps({
+                    "element_id": job["element_id"], "image_hash": job["image_hash"], "status": st,
+                    "text": text.strip(), "error": err, "model_path": model_path, "model_id": backend.model_id,
+                    "prompt_version": prompt_version, "seconds": round(per_item, 2),
+                }, ensure_ascii=False) + "\n")
+                d.write(job["element_id"] + "\n")
+        print(f"[{model_path}] {min(i + batch_size, len(todo))}/{len(todo)} pages done", flush=True)
+
+    records = [json.loads(line) for line in jsonl_lines(out / "transcripts.jsonl")]
+    ok = sum(r["status"] == "ok" for r in records)
+    report = {
+        "task": "transcribe", "model_path": model_path, "model_id": backend.model_id,
+        "prompt_version": prompt_version, "jobs": len(records), "ok": ok, "needs_review": len(records) - ok,
         "validity_rate": ok / len(records) if records else 0.0,
         "seconds_this_run": round(time.monotonic() - started, 1),
         "seconds_per_figure": round(sum(r["seconds"] for r in records) / len(records), 2) if records else 0.0,
@@ -206,8 +282,10 @@ def _data_url(path: Path) -> str:
 class TransformersBackend:
     """Fallback A (nf4-7b: 4-bit NF4 via bitsandbytes) and fallback B (3b: fp16). T4 has no bf16."""
 
-    def __init__(self, model_path: str, max_pixels: int):
+    def __init__(self, model_path: str, max_pixels: int, structured: bool = True):
         _pip("-U", "transformers", "accelerate", "bitsandbytes")
+        self.max_new_tokens = MAX_NEW_TOKENS if structured else TRANSCRIBE_MAX_TOKENS
+        self.last_finish: list[str | None] = []
         import torch
         from transformers import AutoProcessor, BitsAndBytesConfig
 
@@ -229,40 +307,47 @@ class TransformersBackend:
     def generate(self, items, retry: bool = False):
         from PIL import Image
 
-        replies = []
+        replies, self.last_finish = [], []
         for _, prompt, image_path in items:  # one at a time: predictable memory on a T4
             image = Image.open(image_path).convert("RGB")
             messages = [{"role": "user", "content": [{"type": "image"}, {"type": "text", "text": prompt}]}]
             text = self.processor.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
             inputs = self.processor(text=[text], images=[image], return_tensors="pt").to(self.model.device)
             with self.torch.inference_mode():
-                output = self.model.generate(**inputs, max_new_tokens=MAX_NEW_TOKENS, do_sample=False,
+                output = self.model.generate(**inputs, max_new_tokens=self.max_new_tokens, do_sample=False,
                                              repetition_penalty=RETRY_REPETITION_PENALTY if retry else 1.0)
             new_tokens = output[0][inputs["input_ids"].shape[1]:]
             replies.append(self.processor.decode(new_tokens, skip_special_tokens=True))
+            self.last_finish.append("length" if len(new_tokens) >= self.max_new_tokens else "stop")
         return replies
 
 
 class VLLMBackend:
     """Primary: AWQ 7B on vLLM in fp16, with the JSON schema enforced during decoding."""
 
-    def __init__(self, model_path: str, max_pixels: int):
+    def __init__(self, model_path: str, max_pixels: int, structured: bool = True):
         _pip("vllm", "qwen-vl-utils")
+        # vLLM brings its own torch build; the image's preinstalled torchaudio is then built for another
+        # CUDA version and fails the model load (Kaggle image, 2026-10). Captioning needs no audio.
+        subprocess.run([sys.executable, "-m", "pip", "uninstall", "-y", "-q", "torchaudio"], check=False)
         from vllm import LLM, SamplingParams
 
         self.model_id = MODELS[model_path]
         self.llm = LLM(model=self.model_id, dtype="float16", quantization="awq", max_model_len=8192,
                        gpu_memory_utilization=0.9, limit_mm_per_prompt={"image": 1}, enforce_eager=True,
                        mm_processor_kwargs={"min_pixels": MIN_PIXELS, "max_pixels": max_pixels})
-        schema = FigureCaption.model_json_schema()
-        try:  # the structured-output API was renamed between vLLM releases
-            from vllm.sampling_params import StructuredOutputsParams
-            guide = {"structured_outputs": StructuredOutputsParams(json=schema)}
-        except ImportError:
-            from vllm.sampling_params import GuidedDecodingParams
-            guide = {"guided_decoding": GuidedDecodingParams(json=schema)}
-        self.params = SamplingParams(temperature=0, max_tokens=MAX_NEW_TOKENS, **guide)
-        self.retry_params = SamplingParams(temperature=0, max_tokens=MAX_NEW_TOKENS,
+        self.last_finish: list[str | None] = []
+        guide, max_tokens = {}, TRANSCRIBE_MAX_TOKENS
+        if structured:  # captions: the JSON schema is enforced during decoding; transcripts are free text
+            schema, max_tokens = FigureCaption.model_json_schema(), MAX_NEW_TOKENS
+            try:  # the structured-output API was renamed between vLLM releases
+                from vllm.sampling_params import StructuredOutputsParams
+                guide = {"structured_outputs": StructuredOutputsParams(json=schema)}
+            except ImportError:
+                from vllm.sampling_params import GuidedDecodingParams
+                guide = {"guided_decoding": GuidedDecodingParams(json=schema)}
+        self.params = SamplingParams(temperature=0, max_tokens=max_tokens, **guide)
+        self.retry_params = SamplingParams(temperature=0, max_tokens=max_tokens,
                                            repetition_penalty=RETRY_REPETITION_PENALTY, **guide)
 
     def generate(self, items, retry: bool = False):
@@ -271,13 +356,48 @@ class VLLMBackend:
             {"type": "text", "text": prompt},
         ]}] for _, prompt, image_path in items]
         params = self.retry_params if retry else self.params
-        return [o.outputs[0].text for o in self.llm.chat(conversations, params, use_tqdm=False)]
+        outputs = self.llm.chat(conversations, params, use_tqdm=False)
+        self.last_finish = [o.outputs[0].finish_reason for o in outputs]
+        return [o.outputs[0].text for o in outputs]
 
 
-def load_model(model_path: str, max_pixels: int):
+class TesseractBackend:
+    """Tesseract with the Hindi and English models, one page per CPU core."""
+
+    def __init__(self, langs: str = "hin+eng"):
+        subprocess.run(["apt-get", "update", "-q"], check=True)
+        subprocess.run(["apt-get", "install", "-y", "-q", "tesseract-ocr", "tesseract-ocr-hin"], check=True)
+        _pip("pytesseract")
+        import pytesseract
+
+        os.environ["OMP_THREAD_LIMIT"] = "1"  # parallel pages, not threads inside one page
+        self.ocr, self.langs = pytesseract, langs
+        self.model_id = f"tesseract {pytesseract.get_tesseract_version()} {langs}"
+        self.workers = os.cpu_count() or 4
+        self.last_finish: list[str | None] = []
+
+    def generate(self, items, retry: bool = False):
+        from concurrent.futures import ThreadPoolExecutor
+
+        from PIL import Image
+
+        def one(path):
+            return self.ocr.image_to_string(Image.open(path), lang=self.langs)
+
+        with ThreadPoolExecutor(max_workers=self.workers) as pool:
+            out = list(pool.map(one, [image_path for _, _, image_path in items]))
+        self.last_finish = ["stop"] * len(out)  # OCR has no token limit to run into
+        return out
+
+
+def load_model(model_path: str, max_pixels: int, structured: bool = True):
+    if model_path == "tesseract":
+        if structured:
+            raise ValueError("tesseract only transcribes pages; it cannot caption figures")
+        return TesseractBackend()
     if model_path == "awq-7b":
-        return VLLMBackend(model_path, max_pixels)
-    return TransformersBackend(model_path, max_pixels)
+        return VLLMBackend(model_path, max_pixels, structured)
+    return TransformersBackend(model_path, max_pixels, structured)
 
 
 # ---------------------------------------------------------------- entry point
@@ -292,11 +412,25 @@ def find_bundle() -> Path:
     raise SystemExit("bundle not found: no run.json next to the script or under /kaggle/input")
 
 
+def use_kaggle_hf_token() -> None:
+    """Sets HF_TOKEN from the Kaggle secret of that name, if the kernel has one attached (Add-ons >
+    Secrets in the Kaggle editor). The models are not gated: the token only lifts the Hub's rate
+    limit for anonymous downloads. It is never put in the bundle, which is uploaded as a dataset."""
+    if os.environ.get("HF_TOKEN"):
+        return
+    try:
+        from kaggle_secrets import UserSecretsClient
+        os.environ["HF_TOKEN"] = UserSecretsClient().get_secret("HF_TOKEN")
+    except Exception:  # noqa: BLE001 - not on Kaggle, or no such secret attached: download anonymously
+        pass
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", choices=sorted(MODELS), help="run one model path (default: all in run.json)")
     parser.add_argument("--out", default=os.environ.get("CAPTION_OUT", "/kaggle/working"))
     args = parser.parse_args()
+    use_kaggle_hf_token()  # inherited by the per-model subprocesses
     bundle = find_bundle()
     run = json.loads((bundle / "run.json").read_text(encoding="utf-8"))
     out = Path(args.out)
@@ -312,11 +446,12 @@ def main() -> int:
         print(json.dumps(summary, indent=1))
         return 0
 
-    jobs = [json.loads(line) for line in (bundle / "jobs.jsonl").read_text(encoding="utf-8").splitlines() if line]
+    jobs = [json.loads(line) for line in jsonl_lines(bundle / "jobs.jsonl")]
     template = (bundle / run["prompt_file"]).read_text(encoding="utf-8")
+    transcribe = run.get("task", "caption") == "transcribe"
     started = time.monotonic()
     try:
-        backend = load_model(args.model, run["max_pixels"])
+        backend = load_model(args.model, run["max_pixels"], structured=not transcribe)
     except Exception as e:  # a path that will not install or fit is reported, not fatal to the others
         (out / args.model).mkdir(parents=True, exist_ok=True)
         (out / args.model / "load_error.txt").write_text(f"{type(e).__name__}: {e}\n", encoding="utf-8")
@@ -324,7 +459,12 @@ def main() -> int:
         return 1
     print(f"[{args.model}] loaded {backend.model_id} in {time.monotonic() - started:.0f}s; GPU MB {gpu_memory_mb()}",
           flush=True)
-    report = run_jobs(jobs, backend, bundle, out / args.model, args.model, run["prompt_version"], template)
+    if transcribe:
+        batch = getattr(backend, "workers", 4)  # tesseract: one page per core
+        report = run_transcribe(jobs, backend, bundle, out / args.model, args.model, run["prompt_version"], template,
+                                batch_size=batch)
+    else:
+        report = run_jobs(jobs, backend, bundle, out / args.model, args.model, run["prompt_version"], template)
     report["load_seconds"] = round(time.monotonic() - started - report["seconds_this_run"], 1)
     (out / args.model / "run_report.json").write_text(json.dumps(report, indent=1) + "\n", encoding="utf-8")
     return 0

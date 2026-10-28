@@ -9,6 +9,7 @@ import os
 from functools import lru_cache
 from pathlib import Path
 from typing import Literal, Mapping
+from urllib.parse import urlsplit, urlunsplit
 
 import yaml
 from dotenv import load_dotenv
@@ -48,6 +49,9 @@ class Parse(_Section):
     furniture_margin_ratio: float = Field(gt=0, lt=0.5)
     table_strategy: Literal["lines", "lines_strict", "text"]
     vector_heavy_drawings: int = Field(gt=0)
+    # PDF file names whose text layer cannot be trusted (a watermark, or a poor OCR layer over a scan):
+    # every page is treated as a scanned page, for `mmrag transcribe`.
+    scanned_for: list[str] = []
 
 
 class Caption(_Section):
@@ -72,6 +76,9 @@ class Chunk(_Section):
 
 
 class Embed(_Section):
+    # openai: the embeddings API. local: a sentence-transformers model on this machine (Phase 10,
+    # EmbeddingGemma 2), which needs the packages in requirements-local-embed.txt.
+    provider: Literal["openai", "local"] = "openai"
     model: str
     # pgvector's HNSW index supports at most 2,000 dimensions for `vector`.
     dims: int = Field(gt=0, le=2000)
@@ -162,14 +169,40 @@ class Eval(_Section):
     golden_set: Path
     judge_model: str | None
     regression_tolerance: float = Field(ge=0, le=1)
+    # Response relevancy compares question embeddings. It is part of the judge, not of retrieval, so
+    # it stays fixed whatever `embed` says; scores then remain comparable across embedding models.
+    judge_embed_model: str = "text-embedding-3-large"
+    judge_embed_dims: int = Field(default=1536, gt=0)
+
+
+class Writer(_Section):
+    """The model that writes birth-chart readings (Phase 11): the fine-tuned astro-v2-8b behind any
+    OpenAI-compatible server (llama-server on Modal), at WRITER_BASE_URL with WRITER_API_KEY from .env.
+    It only writes: the chart is computed by code and the passages come from the library."""
+
+    model: str = "astro-v4-8b"            # the server's model alias (v2 until 2026-10-13)
+    system_prompt_file: Path = Path("deploy/modal/system_v1.txt")  # the prompt it was trained with
+    max_tokens: int = Field(default=1800, gt=0)
+    temperature: float = Field(default=0.3, ge=0, le=2)
+    timeout_s: float = Field(default=900, gt=0)  # a cold start loads the model first
+    passages: int = Field(default=12, ge=0)  # library passages given to the writer (0: chart facts only)
+    passage_chars: int = Field(default=900, gt=0)
+    repair: bool = True        # one more turn to fix the sentences the checks flag (Level 1, 2026-10-12)
+    remove_flagged: bool = True  # then delete sentences the checks still prove wrong (rules quoted are kept)
+    repeat_penalty: float = Field(default=1.1, ge=1.0, le=2.0)  # llama-server: stops generation loops
 
 
 class Secrets(_Section):
     openai_api_key: SecretStr | None
     database_url: SecretStr
+    writer_base_url: str | None = None   # e.g. https://<workspace>--astro-llm-serve.modal.run/v1
+    writer_api_key: SecretStr | None = None
 
 
 class Settings(_Section):
+    # Replaces the database name in DATABASE_URL (same server and credentials). A config file for an
+    # experiment then switches the embedding model and its database together (Phase 10).
+    database_name: str | None = Field(default=None, pattern=r"^[a-z_][a-z0-9_]{0,62}$")
     paths: Paths
     parse: Parse
     caption: Caption
@@ -179,6 +212,7 @@ class Settings(_Section):
     search: Search
     agent: Agent
     memory: Memory = Memory()
+    writer: Writer = Writer()
     ui: UI
     auth: Auth
     observability: Observability
@@ -197,21 +231,44 @@ class ConfigError(RuntimeError):
     pass
 
 
-def load_settings(config_file: Path, environ: Mapping[str, str]) -> Settings:
-    """Build settings from a YAML file and an environment mapping (no global state)."""
+def _merge(base: dict, override: dict) -> dict:
+    """`override` on top of `base`; nested sections merge key by key, anything else is replaced."""
+    out = dict(base)
+    for key, value in override.items():
+        out[key] = _merge(out[key], value) if isinstance(value, dict) and isinstance(out.get(key), dict) else value
+    return out
+
+
+def _read_yaml(config_file: Path, seen: tuple[Path, ...] = ()) -> dict:
+    """A config file, with `extends: <file>` (relative to this one) applied: the file then holds only
+    what differs from its base, e.g. config.gemma.yaml (Phase 10)."""
+    config_file = config_file.resolve()
+    if config_file in seen:
+        raise ConfigError(f"Config files extend each other in a loop: {config_file}")
     try:
         raw = yaml.safe_load(config_file.read_text(encoding="utf-8")) or {}
     except FileNotFoundError as e:
         raise ConfigError(f"Config file not found: {config_file}") from e
+    base = raw.pop("extends", None)
+    return _merge(_read_yaml(config_file.parent / base, (*seen, config_file)), raw) if base else raw
+
+
+def load_settings(config_file: Path, environ: Mapping[str, str]) -> Settings:
+    """Build settings from a YAML file and an environment mapping (no global state)."""
+    raw = _read_yaml(config_file)
 
     if "secrets" in raw:
         raise ConfigError("Secrets must not be in config.yaml; put them in .env")
     database_url = environ.get("DATABASE_URL")
     if not database_url:
         raise ConfigError("DATABASE_URL is not set (see .env.example)")
+    if raw.get("database_name"):
+        database_url = urlunsplit(urlsplit(database_url)._replace(path="/" + str(raw["database_name"])))
     raw["secrets"] = {
         "openai_api_key": environ.get("OPENAI_API_KEY") or None,
         "database_url": database_url,
+        "writer_base_url": environ.get("WRITER_BASE_URL") or None,
+        "writer_api_key": environ.get("WRITER_API_KEY") or None,
     }
 
     try:

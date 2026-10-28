@@ -1,0 +1,20 @@
+# Phase 10 experiment: EmbeddingGemma 2 (local) instead of OpenAI embeddings.
+# Everything else comes from config.yaml. Use it by setting MMRAG_CONFIG=config.gemma.yaml.
+#
+# The model's vectors cannot be compared with OpenAI's, so it has a database of its own on the same
+# server: create it with `mmrag db create`, then `mmrag db migrate` builds vector(768) columns.
+# Needs: pip install -r requirements-local-embed.txt
+
+extends: config.yaml
+
+database_name: mmrag_gemma
+
+embed:
+  provider: local
+  model: google/embeddinggemma-2   # Apache 2.0; text tower only (270M), CPU float32
+  dims: 768                        # full size; 512/256 trade quality for space (model card)
+  batch_size: 16                   # texts per local forward pass
+
+# Inherited: enrich.link_min_score (0.4) was tuned on OpenAI similarities. EmbeddingGemma scores
+# unrelated text higher (about 0.6 in a first test), so check the link report after the first
+# `ingest index` and raise it here if figures get linked to unrelated paragraphs.

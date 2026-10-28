@@ -13,6 +13,7 @@ from typing import Callable
 
 from opentelemetry import trace
 
+from mmrag.fsutil import jsonl_lines
 from mmrag.config import PROJECT_ROOT, ConfigError, Settings, get_settings
 from mmrag.obs import get_logger, get_tracer, init_telemetry, shutdown_telemetry
 
@@ -38,7 +39,10 @@ def _check_database(settings: Settings) -> str:
         ).fetchone()[0]
         if nearest != 1:
             raise RuntimeError(f"HNSW query returned id {nearest}, expected 1")
-    return f"PostgreSQL {server}, pgvector {row[0]}, HNSW index OK"
+        db.check_embedding_dims(conn, settings)
+        dims, name = db.embedding_dims(conn), conn.info.dbname
+    return f"PostgreSQL {server}, pgvector {row[0]}, HNSW index OK, database {name}" + (
+        f", {dims}-dim embeddings" if dims else "")
 
 
 def _check_openai(settings: Settings) -> str:
@@ -46,13 +50,15 @@ def _check_openai(settings: Settings) -> str:
 
     client = get_client(settings)
     n_models = sum(1 for _ in client.models.list())
-    emb = client.embeddings.create(
-        model=settings.embed.model, input="phase 0 check", dimensions=settings.embed.dims
-    )
-    got = len(emb.data[0].embedding)
-    if got != settings.embed.dims:
-        raise RuntimeError(f"embedding has {got} dims, config says {settings.embed.dims}")
-    msg = f"{n_models} models visible; {settings.embed.model} returns {got} dims"
+    msg = f"{n_models} models visible"
+    if settings.embed.provider == "openai":  # a local model is checked on its own (_check_local_embedding)
+        emb = client.embeddings.create(
+            model=settings.embed.model, input="phase 0 check", dimensions=settings.embed.dims
+        )
+        got = len(emb.data[0].embedding)
+        if got != settings.embed.dims:
+            raise RuntimeError(f"embedding has {got} dims, config says {settings.embed.dims}")
+        msg += f"; {settings.embed.model} returns {got} dims"
     if settings.agent.model:
         chat = client.chat.completions.create(
             model=settings.agent.model,
@@ -65,11 +71,19 @@ def _check_openai(settings: Settings) -> str:
     return msg
 
 
+def _check_local_embedding(settings: Settings) -> str:
+    from mmrag.index.embed import Embedder
+
+    got = len(Embedder(settings).embed(["phase 0 check"], "query")[0])  # dims are checked inside
+    return f"{settings.embed.model} (local) returns {got} dims"
+
+
 def cmd_check(settings: Settings, args: argparse.Namespace) -> int:
     tracer = get_tracer("mmrag.cli")
     checks: list[tuple[str, Callable[[Settings], str], bool]] = [
         ("database", _check_database, True),
         ("openai", _check_openai, settings.secrets.openai_api_key is not None),
+        ("embedding", _check_local_embedding, settings.embed.provider == "local"),
     ]
     failed = False
     with tracer.start_as_current_span("phase0.check") as root:
@@ -77,7 +91,8 @@ def cmd_check(settings: Settings, args: argparse.Namespace) -> int:
         print("config    OK   config.yaml + .env loaded and validated")
         for name, fn, enabled in checks:
             if not enabled:
-                print(f"{name:<9} SKIP OPENAI_API_KEY not set in .env")
+                if name == "openai":
+                    print(f"{name:<9} SKIP OPENAI_API_KEY not set in .env")
                 continue
             with tracer.start_as_current_span(f"check.{name}") as span:
                 try:
@@ -102,6 +117,19 @@ def cmd_check(settings: Settings, args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------- db / models
+
+def cmd_db_create(settings: Settings, args: argparse.Namespace) -> int:
+    from psycopg.conninfo import conninfo_to_dict
+
+    from mmrag import db
+
+    name = conninfo_to_dict(settings.secrets.database_url.get_secret_value())["dbname"]
+    if db.create_database(settings):
+        print(f"Created database {name}. Next: mmrag db migrate")
+    else:
+        print(f"Database {name} already exists.")
+    return 0
+
 
 def cmd_db_migrate(settings: Settings, args: argparse.Namespace) -> int:
     from mmrag import db
@@ -305,24 +333,41 @@ def cmd_doc(settings: Settings, args: argparse.Namespace) -> int:
 # ---------------------------------------------------------------- index and search (Phase 3)
 
 def cmd_ingest_index(settings: Settings, args: argparse.Namespace) -> int:
-    """Enrich, chunk, embed and write one parsed (and captioned) PDF to PostgreSQL."""
+    """Enrich, chunk, embed and write one or more parsed (and captioned) PDFs to PostgreSQL."""
     from mmrag.index.pipeline import index_document
 
-    try:
-        (pdf,) = _pdf_paths(settings, [args.pdf])
-        report = index_document(pdf, settings)
-    except FileNotFoundError as e:
-        print(e)
+    raw_names = getattr(args, "pdf", None)
+    names = raw_names if isinstance(raw_names, list) else ([raw_names] if raw_names else [])
+    manifest = json.loads(Path(args.manifest).read_text(encoding="utf-8")) if getattr(args, "manifest", None) else None
+    if manifest is not None:  # the PDFs need not be here: their ids come from the manifest
+        pdf_dir = settings.resolve(settings.paths.pdf_dir)
+        paths = [pdf_dir / n for n in (names or sorted(manifest))]
+        unknown = [p.name for p in paths if p.name not in manifest]
+        if unknown:
+            print(f"Not in the manifest: {', '.join(unknown)}")
+            return 1
+    else:
+        try:
+            paths = _pdf_paths(settings, names)
+        except FileNotFoundError as e:
+            print(e)
+            return 1
+    if not paths:
+        print(f"No PDFs found in {settings.resolve(settings.paths.pdf_dir)}")
         return 1
-    methods = {m: sum(lk.method == m for lk in report.links) for m in ("explicit", "deictic", "related")}
-    review = sum(c.status != "ok" for c in report.doc.captions.values())
-    print(f"{report.doc.source_file}: {report.result}")
-    print(f"  search documents: {report.counts['text']} text, {report.counts['figure']} figure, "
-          f"{report.counts['table']} table")
-    print(f"  links: {methods['explicit']} explicit, {methods['deictic']} deictic, {methods['related']} related; "
-          f"{len(report.unlinked)} unlinked")
-    print(f"  captions needing review after the label check: {review}")
-    print(f"  link report: {report.link_report}")
+    no_db = getattr(args, "no_db", False)
+    for pdf in paths:
+        ids = (manifest[pdf.name]["doc_id"], manifest[pdf.name]["sha256"]) if manifest else None
+        report = index_document(pdf, settings, no_db=no_db, ids=ids)
+        methods = {m: sum(lk.method == m for lk in report.links) for m in ("explicit", "deictic", "related")}
+        review = sum(c.status != "ok" for c in report.doc.captions.values())
+        print(f"{report.doc.source_file}: {report.result}")
+        print(f"  search documents: {report.counts['text']} text, {report.counts['figure']} figure, "
+              f"{report.counts['table']} table")
+        print(f"  links: {methods['explicit']} explicit, {methods['deictic']} deictic, {methods['related']} related; "
+              f"{len(report.unlinked)} unlinked")
+        print(f"  captions needing review after the label check: {review}")
+        print(f"  link report: {report.link_report}")
     return 0
 
 
@@ -539,8 +584,8 @@ def _judge(settings: Settings):
 
     if not settings.eval.judge_model:
         raise SystemExit("eval.judge_model is not set in config.yaml")
-    return Metrics(OpenAIJudge(get_client(settings), settings.eval.judge_model, settings.embed.model,
-                               settings.embed.dims))
+    return Metrics(OpenAIJudge(get_client(settings), settings.eval.judge_model, settings.eval.judge_embed_model,
+                               settings.eval.judge_embed_dims))
 
 
 def _eval_with_memory(settings: Settings, args: argparse.Namespace):
@@ -612,6 +657,15 @@ def cmd_eval(settings: Settings, args: argparse.Namespace) -> int:
 
         tuned = apply_overrides(settings, args.set or [])
         items, _ = load_golden_set(golden)
+        if args.indexed_only:  # a partial library: questions about PDFs not indexed would be misses for any setting
+            from mmrag import db
+
+            with db.connect(settings) as conn:
+                indexed = {r[0] for r in conn.execute("SELECT doc_id FROM documents")}
+            kept = [i for i in items if i.reference_ids and all(r.split(":")[0] in indexed for r in i.reference_ids)]
+            print(f"{len(kept)} of {sum(i.answerable for i in items)} answerable questions have every reference "
+                  f"in the {len(indexed)} indexed PDFs")
+            items = kept
         out = retrieval_scores(items, lambda q, coll: search(tuned, q, coll, 10), DbStore(settings).locations)
         label = ", ".join(args.set or []) or "current config"
         print(f"{label}: " + " · ".join(f"{k} {v}" for k, v in out["overall"].items()))
@@ -674,13 +728,20 @@ def _caption_dirs(settings: Settings, pdf: Path) -> tuple[str, Path]:
     return did, settings.resolve(settings.paths.data_dir) / "captions" / did
 
 
+def _newest_run(runs: Path) -> Path:
+    """The most recently pulled run folder. By time, not name: a folder named by hand (say
+    "local-test") sorts after the timestamped ones. ValueError when there is none."""
+    folders = [d for d in runs.glob("*") if d.is_dir()] if runs.is_dir() else []
+    return max(folders, key=lambda d: d.stat().st_mtime)
+
+
 def _latest_run(caption_dir: Path, run: str | None) -> Path:
     if run:
         return Path(run)
-    runs = sorted((caption_dir / "runs").glob("*")) if (caption_dir / "runs").is_dir() else []
-    if not runs:
-        raise FileNotFoundError(f"no pulled runs in {caption_dir / 'runs'}; run `mmrag caption pull` first")
-    return runs[-1]
+    try:
+        return _newest_run(caption_dir / "runs")
+    except ValueError:
+        raise FileNotFoundError(f"no pulled runs in {caption_dir / 'runs'}; run `mmrag caption pull` first") from None
 
 
 def cmd_caption(settings: Settings, args: argparse.Namespace) -> int:
@@ -708,8 +769,8 @@ def cmd_caption(settings: Settings, args: argparse.Namespace) -> int:
         if not el_file.is_file():
             print(f"No parse output for {pdf.name}; run `mmrag ingest parse {pdf.name}` first")
             return 1
-        elements = [Element.model_validate_json(x) for x in el_file.read_text(encoding="utf-8").splitlines() if x]
-        tables = [Table.model_validate_json(x) for x in tab_file.read_text(encoding="utf-8").splitlines() if x] \
+        elements = [Element.model_validate_json(x) for x in jsonl_lines(el_file) if x]
+        tables = [Table.model_validate_json(x) for x in jsonl_lines(tab_file) if x] \
             if tab_file.is_file() else []
         cache = None if args.pilot else CaptionCache(cache_path(settings))
         jobs = build_jobs(elements, tables, settings, cache=cache)
@@ -774,6 +835,301 @@ def cmd_caption(settings: Settings, args: argparse.Namespace) -> int:
     return 2
 
 
+def cmd_transcribe(settings: Settings, args: argparse.Namespace) -> int:
+    """Scanned pages: the VLM copies each page's text on Kaggle; indexing then treats it as text."""
+    import datetime
+
+    from mmrag.ingest import kaggle_job
+    from mmrag.ingest.bundle import build_page_jobs, write_bundle
+    from mmrag.ingest.models import Element
+    from mmrag.ingest.transcripts import import_transcripts, load_transcripts
+
+    try:
+        (pdf,) = _pdf_paths(settings, [args.pdf])
+    except FileNotFoundError as e:
+        print(e)
+        return 1
+    did, cdir = _caption_dirs(settings, pdf)
+    bundle, runs = cdir / "pages_bundle", cdir / "transcribe_runs"
+
+    if args.transcribe_command == "bundle":
+        el_file = settings.resolve(settings.paths.data_dir) / "elements" / did / "elements.jsonl"
+        if not el_file.is_file():
+            print(f"No parse output for {pdf.name}; run `mmrag ingest parse {pdf.name}` first")
+            return 1
+        elements = [Element.model_validate_json(x) for x in jsonl_lines(el_file) if x]
+        hashes = {e.element_id: e.content_hash for e in elements}
+        done = {i for i, r in load_transcripts(cdir / "transcripts.jsonl").items() if r.image_hash == hashes.get(i)}
+        jobs = build_page_jobs(elements, done)
+        if not jobs:
+            print("Nothing to transcribe: no scanned pages, or every one is already transcribed.")
+            return 0
+        engine = "tesseract" if args.engine == "tesseract" else settings.caption.model_path
+        write_bundle(jobs, settings, bundle, models=[engine], task="transcribe")
+        print(f"Bundle: {len(jobs)} scanned page(s) for {engine} -> {bundle}")
+        return 0
+
+    if args.transcribe_command == "push":
+        if not (bundle / "run.json").is_file():
+            print(f"No bundle in {bundle}; run `mmrag transcribe bundle {pdf.name}` first")
+            return 1
+        models = json.loads((bundle / "run.json").read_text(encoding="utf-8"))["models"]
+        ref = kaggle_job.push(bundle, did, settings, cdir / "pages_kernel", task="transcribe",
+                              gpu=any(m != "tesseract" for m in models))
+        print(f"Started Kaggle job {ref}\nCheck progress with `mmrag transcribe status {pdf.name}` "
+              f"or at https://www.kaggle.com/code/{ref}")
+        return 0
+
+    if args.transcribe_command == "status":
+        print(kaggle_job.status(did, settings, task="transcribe"))
+        return 0
+
+    if args.transcribe_command == "pull":
+        run = runs / datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        kaggle_job.pull(did, settings, run, task="transcribe")
+        print(f"Downloaded to {run}")
+        summary = run / "summary.json"
+        if summary.is_file():
+            for m, rep in json.loads(summary.read_text(encoding="utf-8")).items():
+                print(f"  {m:<7} " + ("FAILED" if rep.get("failed") else f"{rep['ok']}/{rep['jobs']} pages ok, "
+                                      f"{rep['seconds_per_figure']}s per page"))
+        return 0
+
+    # import
+    try:
+        run = Path(args.run) if args.run else _newest_run(runs)
+    except ValueError:
+        print(f"No pulled runs in {runs}; run `mmrag transcribe pull {pdf.name}` first")
+        return 1
+    found = sorted(run.glob("*/transcripts.jsonl"))  # one folder per engine that ran
+    if len(found) != 1:
+        print(f"Expected one engine's transcripts in {run}, found {len(found)}")
+        return 1
+    result = import_transcripts(found[0], did, settings)
+    print(f"Imported {result.ok} page(s); {result.blank} blank; {result.needs_review} need review -> {result.path}")
+    for e in result.errors:
+        print(f"  invalid record, not imported: {e}")
+    print(f"Next: mmrag ingest index {pdf.name}")
+    return 0
+
+
+def cmd_embed(settings: Settings, args: argparse.Namespace) -> int:
+    """Embeddings on a Kaggle GPU: bundle parse outputs, run `ingest index --no-db` there, merge the
+    vectors it returns into the local cache. PostgreSQL stays local; `import --index` writes to it."""
+    import datetime
+    import os
+
+    from mmrag.index import embed_bundle
+    from mmrag.ingest import kaggle_job
+
+    key, work = embed_bundle.bundle_key(settings), embed_bundle.bundle_dir(settings)
+    bundle, runs = work / "bundle", work / "runs"
+
+    if args.embed_command == "bundle":
+        try:
+            pdfs = _pdf_paths(settings, args.pdf)
+        except FileNotFoundError as e:
+            print(e)
+            return 1
+        data = settings.resolve(settings.paths.data_dir)
+        from mmrag.ingest.ids import doc_id
+
+        parsed = [p for p in pdfs if (data / "elements" / doc_id(p) / "elements.jsonl").is_file()]
+        for p in sorted(set(pdfs) - set(parsed)):
+            print(f"  not parsed, left out: {p.name}")
+        if not parsed:
+            print("Nothing to bundle: parse the PDFs first (`mmrag ingest parse`).")
+            return 1
+        config_file = Path(os.environ.get("MMRAG_CONFIG") or PROJECT_ROOT / "config.yaml")
+        info = embed_bundle.build_bundle(parsed, settings, config_file, bundle)
+        print(f"Bundle: {info.documents} PDF(s), {info.megabytes} MB -> {info.path}")
+        return 0
+
+    if args.embed_command == "push":
+        if not (bundle / "run.json").is_file():
+            print(f"No bundle in {bundle}; run `mmrag embed bundle` first")
+            return 1
+        ref = kaggle_job.push(bundle, key, settings, work, task="embed", gpu=True)
+        print(f"Started Kaggle job {ref}\nCheck progress with `mmrag embed status` or at https://www.kaggle.com/code/{ref}")
+        return 0
+
+    if args.embed_command == "status":
+        print(kaggle_job.status(key, settings, task="embed"))
+        return 0
+
+    if args.embed_command == "pull":
+        run = runs / datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+        kaggle_job.pull(key, settings, run, task="embed")
+        summary = run / "summary.json"
+        print(f"Downloaded to {run}")
+        if summary.is_file():
+            rep = json.loads(summary.read_text(encoding="utf-8"))
+            print(f"  {rep['vectors']} vectors for {rep['documents']} PDF(s) in {rep['seconds']}s on {rep['device']}"
+                  + (f"; the job exited with {rep['exit_code']}" if rep["exit_code"] else ""))
+        return 0
+
+    # import
+    try:
+        run = Path(args.run) if args.run else _newest_run(runs)
+    except ValueError:
+        print(f"No pulled runs in {runs}; run `mmrag embed pull` first")
+        return 1
+    added, seen = embed_bundle.merge_cache(run / "embeddings.jsonl", settings)
+    print(f"Merged into {embed_bundle.cache_file(settings).name}: {added} new vector(s), {seen} already cached")
+    if not args.index:
+        print("Next: mmrag ingest index <pdf ...> (every vector is now cached, so it only writes to PostgreSQL)")
+        return 0
+    manifest = json.loads((bundle / "manifest.json").read_text(encoding="utf-8"))
+    return cmd_ingest_index(settings, argparse.Namespace(pdf=sorted(manifest), no_db=False, manifest=None))
+
+
+def cmd_charts(settings: Settings, args: argparse.Namespace) -> int:
+    """Read planet placements off South Indian charts among the captioned figures (OCR on this machine)."""
+    import time
+
+    from mmrag.ingest.charts import read_charts
+    from mmrag.ingest.ids import doc_id
+    from mmrag.ingest.models import Element
+
+    try:
+        import cv2
+        from rapidocr_onnxruntime import RapidOCR
+    except ImportError:
+        print("Chart reading needs the OCR packages: pip install -r requirements-charts.txt")
+        return 1
+    try:
+        pdfs = _pdf_paths(settings, args.pdf)
+    except FileNotFoundError as e:
+        print(e)
+        return 1
+    data = settings.resolve(settings.paths.data_dir)
+    engine = RapidOCR()
+    ocr = lambda img: engine(img)[0]  # noqa: E731
+    total = {"charts": 0, "figures": 0}
+    for pdf in pdfs:
+        did = doc_id(pdf)
+        el_file, cap_file = data / "elements" / did / "elements.jsonl", data / "captions" / did / "captions.jsonl"
+        if not el_file.is_file() or not cap_file.is_file():
+            continue
+        captioned = {json.loads(x)["element_id"] for x in jsonl_lines(cap_file)}
+        figures = [e for e in (Element.model_validate_json(x) for x in jsonl_lines(el_file))
+                   if e.element_id in captioned and e.asset_path and e.type in ("image", "vector_figure")]
+        if not figures:
+            continue
+        t, rows, charts = time.monotonic(), [], 0
+        for e in figures:
+            img = cv2.imread(str(data / e.asset_path))
+            if img is None:
+                continue
+            found = read_charts(img, ocr)
+            charts += len(found)
+            rows.append(json.dumps({"element_id": e.element_id, "image_hash": e.content_hash,
+                                    "charts": [{"kind": r.kind, "lagna": r.lagna, "placements": r.placements,
+                                                "unread": r.unread} for r in found],
+                                    "text": " ".join(r.text() for r in found if r.text())}, ensure_ascii=False))
+        (data / "captions" / did / "charts.jsonl").write_text("\n".join(rows) + "\n", encoding="utf-8")
+        total["charts"] += charts
+        total["figures"] += len(rows)
+        print(f"{pdf.name}: {charts} South Indian chart(s) in {len(rows)} figures ({time.monotonic() - t:.0f} s)")
+    print(f"Read {total['charts']} charts among {total['figures']} figures. Next: re-index these PDFs "
+          "(mmrag embed bundle ... or mmrag ingest index ...)")
+    return 0
+
+
+# ---------------------------------------------------------------- astro (Phase 11)
+
+def _print_reading(reading, show_facts: bool) -> None:
+    from mmrag.astro.reading import sources_markdown
+
+    if show_facts and reading.facts:
+        print(reading.facts, end="\n\n")
+    print(reading.text or "(no text)")
+    if reading.cited:
+        print("\nSources:\n" + sources_markdown(reading))
+    for n in reading.notices:
+        print(f"\nNote: {n}")
+    print(f"\n[{reading.model} · {reading.seconds:.1f} s · {reading.input_tokens} tokens in, "
+          f"{reading.output_tokens} out · {len(reading.passages)} passages given, {len(reading.cited)} cited]")
+
+
+def _astro_judge(settings: Settings, args: argparse.Namespace) -> int:
+    """Write the test cases with the chosen writer(s) and have Gemini review every reading."""
+    import datetime
+
+    from mmrag.astro import judge as J
+
+    judge = None
+    if not args.no_judge:
+        try:
+            judge = J.gemini_judge(args.judge_model)
+        except RuntimeError as e:
+            print(f"Error: {e}", file=sys.stderr)
+            return 2
+    writers = ["astro", "openai"] if args.writer == "both" else [args.writer]
+    cases = J.load_cases(Path(args.cases))
+
+    def show(r) -> None:
+        if r.error:
+            print(f"{r.case_id:24} {r.writer:7} FAILED {r.error[:120]}")
+        elif not r.judgement:
+            print(f"{r.case_id:24} {r.writer:7} written ({r.seconds} s, checker notes {len(r.checker_notes)})")
+        else:
+            j = r.judgement
+            majors = sum(e["severity"] == "major" for e in j["errors"])
+            print(f"{r.case_id:24} {r.writer:7} overall {j['overall']}/5  errors {len(j['errors'])} "
+                  f"({majors} major)  checker notes {len(r.checker_notes)}  {r.seconds} s")
+
+    if args.rejudge:
+        out = Path(args.rejudge)
+        report = J.rejudge(J.load_report(out / "results.json"), judge, args.judge_model, on_result=show)
+    else:
+        report = J.run(settings, cases, writers, judge, args.judge_model, only=args.only,
+                       use_books=not args.no_books, on_result=show)
+        out = settings.resolve(settings.paths.data_dir) / "eval" / "astro" / (
+            datetime.datetime.now().strftime("%Y%m%d-%H%M") + (f"-{args.label}" if args.label else ""))
+    path = J.write_report(report, out)
+    for w, s in J.summary(report).items():
+        print(f"{w}: overall {s['overall']}, chart {s['chart_accuracy']}, astrology {s['astrology_correctness']}, "
+              f"passages {s['passage_use']}, age {s['age_appropriateness']}, safety {s['safety']}, "
+              f"helpful {s['helpfulness']}, major errors per reading {s['major_errors']}")
+    print(f"Report: {path}")
+    return 0
+
+
+def cmd_astro(settings: Settings, args: argparse.Namespace) -> int:
+    """Birth charts computed by code; readings and answers written by the fine-tuned model."""
+    from datetime import date
+
+    from mmrag.astro.natal import ChartInputError, compute_chart, parse_birth
+    from mmrag.astro.reading import WriterNotConfigured, answer_question, write_reading
+
+    on = date.fromisoformat(args.on) if getattr(args, "on", None) else None
+    if args.astro_command == "judge":
+        return _astro_judge(settings, args)
+    try:
+        if args.astro_command == "ask":
+            reading = answer_question(settings, args.question, writer=args.writer, use_books=not args.no_books)
+            _print_reading(reading, show_facts=False)
+            return 0
+        chart = compute_chart(parse_birth(args.date, args.time, args.tz, args.lat, args.lon, args.name, args.place))
+        if args.astro_command == "chart":
+            print(chart.facts(on))
+            return 0
+        reading = write_reading(settings, chart, question=args.question, writer=args.writer,
+                                use_books=not args.no_books, on=on)
+    except (ChartInputError, WriterNotConfigured) as e:
+        print(f"Error: {e}", file=sys.stderr)
+        return 2
+    _print_reading(reading, show_facts=True)
+    if args.out:
+        from mmrag.astro.reading import sources_markdown
+
+        Path(args.out).write_text(f"{reading.facts}\n\n{reading.text}\n\n{sources_markdown(reading)}\n"
+                                  + "".join(f"\nNote: {n}" for n in reading.notices), encoding="utf-8")
+        print(f"Saved to {args.out}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="mmrag")
     sub = parser.add_subparsers(dest="command", required=True)
@@ -781,6 +1137,7 @@ def main(argv: list[str] | None = None) -> int:
     sub.add_parser("models", help="list OpenAI models visible to your API key")
     db_parser = sub.add_parser("db", help="database commands")
     db_sub = db_parser.add_subparsers(dest="db_command", required=True)
+    db_sub.add_parser("create", help="create the configured database if it does not exist (e.g. database_name)")
     db_sub.add_parser("migrate", help="apply pending SQL migrations")
     db_backup = db_sub.add_parser("backup", help="dump the whole database (default: data/backups/)")
     db_backup.add_argument("--out")
@@ -795,8 +1152,12 @@ def main(argv: list[str] | None = None) -> int:
     ingest_sub = ingest_parser.add_subparsers(dest="ingest_command", required=True)
     parse_parser = ingest_sub.add_parser("parse", help="parse one PDF and build its review sheet")
     parse_parser.add_argument("pdf", help="PDF file name in paths.pdf_dir, or a path")
-    index_parser = ingest_sub.add_parser("index", help="enrich, chunk, embed and write one PDF to the database")
-    index_parser.add_argument("pdf", help="PDF file name in paths.pdf_dir, or a path")
+    index_parser = ingest_sub.add_parser("index", help="enrich, chunk, embed and write PDFs to the database")
+    index_parser.add_argument("pdf", nargs="*", help="PDF file name in paths.pdf_dir, or a path (default: all)")
+    index_parser.add_argument("--no-db", action="store_true",
+                              help="compute and cache embeddings only, without connecting or writing to PostgreSQL")
+    index_parser.add_argument("--manifest", help="JSON {pdf name: {doc_id, sha256}}: index from parse outputs "
+                                                 "alone, without the PDF files (the Kaggle embedding job)")
     cmp_parser = ingest_sub.add_parser("compare-summaries", help="table summaries from several models, side by side")
     cmp_parser.add_argument("pdf", help="PDF file name in paths.pdf_dir, or a path")
     cmp_parser.add_argument("--models", default="gpt-4o-mini,gpt-5.4-mini,gpt-5.4-nano")
@@ -891,6 +1252,8 @@ def main(argv: list[str] | None = None) -> int:
     e_retr.add_argument("--set", action="append", metavar="SECTION.FIELD=VALUE",
                         help="override a setting for this run, e.g. search.keyword_mode=any (repeatable)")
     e_retr.add_argument("--show-misses", action="store_true")
+    e_retr.add_argument("--indexed-only", action="store_true",
+                        help="only questions whose reference evidence is in PDFs indexed in this database")
     e_report = eval_sub.add_parser("report", help="write the report for a run")
     e_report.add_argument("run_id")
     caption_parser = sub.add_parser("caption", help="VLM figure captioning on Kaggle (Phase 2)")
@@ -910,6 +1273,62 @@ def main(argv: list[str] | None = None) -> int:
         p.add_argument("pdf", help="PDF file name in paths.pdf_dir, or a path")
     for p in (c_report, c_import):
         p.add_argument("--run", help="a pulled run folder (default: the latest)")
+    ch_parser = sub.add_parser("charts", help="read planet placements off South Indian horoscope charts")
+    ch_sub = ch_parser.add_subparsers(dest="charts_command", required=True)
+    ch_read = ch_sub.add_parser("read", help="OCR the captioned figures and store charts.jsonl per PDF")
+    ch_read.add_argument("pdf", nargs="*", help="PDF file names in paths.pdf_dir (default: all)")
+    em_parser = sub.add_parser("embed", help="compute embeddings on a Kaggle GPU into the local cache")
+    em_sub = em_parser.add_subparsers(dest="embed_command", required=True)
+    e_bundle = em_sub.add_parser("bundle", help="package the parse outputs of PDFs (default: all in pdf_dir)")
+    e_bundle.add_argument("pdf", nargs="*", help="PDF file names in paths.pdf_dir")
+    em_sub.add_parser("push", help="upload the bundle and start the Kaggle GPU job")
+    em_sub.add_parser("status", help="show the Kaggle job's status")
+    em_sub.add_parser("pull", help="download the vectors the job computed")
+    e_import = em_sub.add_parser("import", help="merge pulled vectors into the local embedding cache")
+    e_import.add_argument("--run", help="a pulled run folder (default: the latest)")
+    e_import.add_argument("--index", action="store_true", help="then index the bundled PDFs (database writes only)")
+    tr_parser = sub.add_parser("transcribe", help="VLM transcription of scanned pages on Kaggle")
+    tr_sub = tr_parser.add_subparsers(dest="transcribe_command", required=True)
+    t_bundle = tr_sub.add_parser("bundle", help="package the scanned pages not yet transcribed")
+    t_bundle.add_argument("--engine", choices=["vlm", "tesseract"], default="vlm",
+                          help="vlm: caption.model_path on a GPU; tesseract: Hindi+English OCR on a CPU machine")
+    tr_sub.add_parser("push", help="upload the pages and start the Kaggle GPU job")
+    tr_sub.add_parser("status", help="show the Kaggle job's status")
+    tr_sub.add_parser("pull", help="download the Kaggle job's transcripts")
+    t_import = tr_sub.add_parser("import", help="validate and store transcripts from a pulled run")
+    t_import.add_argument("--run", help="a pulled run folder (default: the latest)")
+    for p in tr_sub.choices.values():
+        p.add_argument("pdf", help="PDF file name in paths.pdf_dir, or a path")
+    astro_parser = sub.add_parser("astro", help="birth charts and readings by the fine-tuned model (Phase 11)")
+    astro_sub = astro_parser.add_subparsers(dest="astro_command", required=True)
+    a_chart = astro_sub.add_parser("chart", help="compute a birth chart (no model involved)")
+    a_read = astro_sub.add_parser("reading", help="a chart reading written by the fine-tuned model")
+    for p in (a_chart, a_read):
+        p.add_argument("--date", required=True, help="birth date, YYYY-MM-DD")
+        p.add_argument("--time", required=True, help="local birth time, HH:MM (24-hour)")
+        p.add_argument("--tz", required=True, help="time zone, e.g. Asia/Kolkata, or an offset like +05:30")
+        p.add_argument("--lat", type=float, required=True, help="latitude, north positive (e.g. 28.6139)")
+        p.add_argument("--lon", type=float, required=True, help="longitude, east positive (e.g. 77.2090)")
+        p.add_argument("--name")
+        p.add_argument("--place", help="place name, shown in the reading only")
+        p.add_argument("--on", help="date for the running dasha, YYYY-MM-DD (default: today)")
+    a_read.add_argument("--question", help="a question about this chart instead of a full reading")
+    a_ask = astro_sub.add_parser("ask", help="a plain astrology question (model alone with --no-books)")
+    a_ask.add_argument("question")
+    for p in (a_read, a_ask):
+        p.add_argument("--writer", choices=["astro", "openai"], default="astro",
+                       help="astro: the fine-tuned model (WRITER_BASE_URL); openai: agent.model, to compare")
+        p.add_argument("--no-books", action="store_true", help="no library passages: the model alone")
+    a_read.add_argument("--out", help="also save the reading as a Markdown file")
+    a_judge = astro_sub.add_parser("judge", help="write the test cases and have Gemini judge each reading")
+    a_judge.add_argument("--writer", choices=["astro", "openai", "both"], default="astro")
+    a_judge.add_argument("--judge-model", default="gemini-flash-latest", help="a Gemini model (GEMINI_API_KEY in .env)")
+    a_judge.add_argument("--cases", default=str(PROJECT_ROOT / "eval" / "astro_cases.yaml"))
+    a_judge.add_argument("--only", nargs="*", help="case ids to run (default: all)")
+    a_judge.add_argument("--no-books", action="store_true", help="no library passages: the model alone")
+    a_judge.add_argument("--no-judge", action="store_true", help="write the readings only; judge later with --rejudge")
+    a_judge.add_argument("--rejudge", help="a report folder: judge its readings that have no judgement yet")
+    a_judge.add_argument("--label", help="appended to the report folder name, e.g. level1")
     args = parser.parse_args(argv)
 
     try:
@@ -922,7 +1341,7 @@ def main(argv: list[str] | None = None) -> int:
     handlers = {
         "check": cmd_check,
         "models": cmd_models,
-        "db": {"migrate": cmd_db_migrate, "backup": cmd_db_backup, "restore": cmd_db_restore,
+        "db": {"create": cmd_db_create, "migrate": cmd_db_migrate, "backup": cmd_db_backup, "restore": cmd_db_restore,
                "verify-restore": cmd_db_verify_restore}.get(getattr(args, "db_command", None)),
         "profile": cmd_profile,
         "ingest": {"parse": cmd_ingest_parse, "index": cmd_ingest_index,
@@ -932,11 +1351,15 @@ def main(argv: list[str] | None = None) -> int:
         "ask-batch": cmd_ask_batch,
         "search-report": cmd_search_report,
         "caption": cmd_caption,
+        "transcribe": cmd_transcribe,
+        "embed": cmd_embed,
+        "charts": cmd_charts,
         "eval": cmd_eval,
         "user": cmd_user,
         "doc": cmd_doc,
         "obs": cmd_obs,
         "memory": cmd_memory,
+        "astro": cmd_astro,
     }
     try:
         return handlers[args.command](settings, args)
@@ -961,6 +1384,10 @@ def _friendly_error(e: Exception) -> str | None:
         return ("Windows Smart App Control blocked a library this command needs. Run it in Linux instead: "
                 "docker compose run --rm ingest <the same command>, e.g. docker compose run --rm ingest "
                 "ingest index \"file.pdf\" (see docs/07-operations.md).")
+    from mmrag.db import EmbeddingDimsMismatch
+
+    if isinstance(e, EmbeddingDimsMismatch):
+        return text
     if isinstance(e, psycopg.OperationalError):
         return ("Cannot reach the database. Start it with `docker compose up -d` and check DATABASE_URL in .env.")
     if isinstance(e, MissingApiKey):

@@ -51,7 +51,7 @@ def load_golden_set(path: Path) -> tuple[list[GoldenItem], str]:
     """Items in file order and the file's version (first 12 hex chars of its SHA-256)."""
     raw = path.read_bytes()
     items, seen = [], set()
-    for n, line in enumerate(raw.decode("utf-8").splitlines(), 1):
+    for n, line in enumerate(raw.decode("utf-8").split("\n"), 1):  # not splitlines(): see fsutil.jsonl_lines
         if not line.strip():
             continue
         try:

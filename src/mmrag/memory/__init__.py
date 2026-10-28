@@ -77,7 +77,9 @@ def _lazy_embedder(settings: Settings) -> Callable[[list[str]], list[list[float]
             from mmrag.index.embed import Embedder
 
             holder["embedder"] = Embedder(settings)
-        return holder["embedder"].embed(texts)
+        # The store embeds memories and recall queries through this one function, so both sides
+        # use the symmetric prompt.
+        return holder["embedder"].embed(texts, "similarity")
 
     return embed
 

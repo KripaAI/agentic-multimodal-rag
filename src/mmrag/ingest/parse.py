@@ -176,7 +176,10 @@ def parse_document(path: Path, settings: Settings) -> ParseResult:
             body_size = _body_font_size([b for blocks in all_blocks for b in blocks])
             ctx.furniture = find_furniture_text(doc, cfg)
 
+            every_page_scanned = path.name in cfg.scanned_for
             for page, blocks in zip(doc, all_blocks):
+                if every_page_scanned:  # its text layer is not the page's text; transcription replaces it
+                    continue
                 with tracer.start_as_current_span("parse.page") as span:
                     n = page.number + 1
                     page_tables = detect_tables(page, blocks, ctx)
@@ -200,7 +203,7 @@ def parse_document(path: Path, settings: Settings) -> ParseResult:
                     span.set_attribute("mmrag.images", len(images))
                     span.set_attribute("mmrag.vector_figures", len(figures))
 
-            others += detect_textless_pages(doc, ctx)
+            others += detect_textless_pages(doc, ctx, every_page=every_page_scanned)
             assign_section_paths(text_blocks, others)
 
             elements = sorted([e for e, _ in text_blocks] + others, key=lambda e: (e.page, e.bbox[1], e.bbox[0]))
@@ -770,13 +773,13 @@ def _merge_by_caption(
 
 # ---------------------------------------------------------------- textless pages
 
-def detect_textless_pages(doc: pymupdf.Document, ctx: ParseContext) -> list[Element]:
-    """Pages with fewer than `textless_chars` characters, rendered whole at `render_dpi`
-    as `scanned_page` elements for VLM transcription."""
+def detect_textless_pages(doc: pymupdf.Document, ctx: ParseContext, every_page: bool = False) -> list[Element]:
+    """Pages with fewer than `textless_chars` characters (or every page, for a PDF listed in
+    `parse.scanned_for`), rendered whole at `render_dpi` as `scanned_page` elements for VLM transcription."""
     out = []
     for page in doc:
-        text = page.get_text().strip()
-        if len(text) >= ctx.cfg.textless_chars:
+        text = "" if every_page else page.get_text().strip()
+        if not every_page and len(text) >= ctx.cfg.textless_chars:
             continue
         n = page.number + 1
         e_id = ctx.next_element_id(n, "scanned_page")

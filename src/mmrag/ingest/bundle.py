@@ -23,6 +23,10 @@ from mmrag.ingest.models import Element, Table
 
 CONTEXT_WORDS = 150
 PROMPTS_DIR = PROJECT_ROOT / "gpu_job" / "caption" / "prompts"
+# Page transcription (scanned pages): its own prompt, and about twice the caption pixel budget, so
+# body text stays legible (2,560 visual tokens, which still fits the job's 8,192-token context).
+TRANSCRIBE_PROMPT_VERSION = "transcribe_v1"
+TRANSCRIBE_MAX_PIXELS = 2560 * 28 * 28
 _FIGURE_NUMBER = re.compile(r"^\s*(figure|fig\.)\s*(\d+(?:\.\d+)*)", re.IGNORECASE)
 
 
@@ -101,14 +105,27 @@ def build_jobs(
     return jobs
 
 
-def write_bundle(jobs: list[Job], settings: Settings, out: Path, models: list[str]) -> Path:
+def build_page_jobs(elements: list[Element], done: set[str] = frozenset()) -> list[Job]:
+    """One transcription job per scanned page (a page without a text layer), in page order.
+    Pages in `done` (element ids already transcribed for the same image) are left out."""
+    pages = sorted((e for e in elements if e.type == "scanned_page" and e.status == "ok" and e.asset_path
+                    and e.element_id not in done), key=lambda e: e.page)
+    return [Job(element_id=e.element_id, kind=e.type, page=e.page, image=e.asset_path, image_hash=e.content_hash,
+                source_file=e.source_file, section_path=e.section_path, pdf_caption=None, context_before="",
+                context_after="", figure_refs=[]) for e in pages]
+
+
+def write_bundle(jobs: list[Job], settings: Settings, out: Path, models: list[str], task: str = "caption") -> Path:
     """Write `out/` (jobs.jsonl, images/, the prompt, run.json) and `out.zip`.
 
     `models` are the model paths the GPU job should run: one for a full run, several
-    for the pilot comparison (plan Phase 2, task 4)."""
+    for the pilot comparison (plan Phase 2, task 4). `task` is "caption" (figures) or
+    "transcribe" (scanned pages: plain text, its own prompt and pixel budget)."""
     cfg = settings.caption
     data_dir = settings.resolve(settings.paths.data_dir)
-    prompt = PROMPTS_DIR / f"caption_{cfg.prompt_version}.md"
+    version = TRANSCRIBE_PROMPT_VERSION if task == "transcribe" else cfg.prompt_version
+    max_pixels = TRANSCRIBE_MAX_PIXELS if task == "transcribe" else cfg.max_pixels
+    prompt = PROMPTS_DIR / (f"{version}.md" if task == "transcribe" else f"caption_{version}.md")
     if not prompt.is_file():
         raise FileNotFoundError(f"prompt file missing: {prompt}")
 
@@ -121,8 +138,8 @@ def write_bundle(jobs: list[Job], settings: Settings, out: Path, models: list[st
         lines.append(job.model_copy(update={"image": name}).model_dump_json())
     (out / "jobs.jsonl").write_text("\n".join(lines) + "\n", encoding="utf-8")
     shutil.copyfile(prompt, out / prompt.name)
-    run = {"models": models, "prompt_version": cfg.prompt_version, "prompt_file": prompt.name,
-           "max_pixels": cfg.max_pixels, "jobs": len(jobs)}
+    run = {"task": task, "models": models, "prompt_version": version, "prompt_file": prompt.name,
+           "max_pixels": max_pixels, "jobs": len(jobs)}
     (out / "run.json").write_text(json.dumps(run, indent=1) + "\n", encoding="utf-8")
     shutil.make_archive(str(out), "zip", out)
     return out

@@ -336,6 +336,7 @@ Deleting a `documents` row removes all of its data through cascading foreign key
   4. Drop the old column.
 
   Search never mixes vectors from two models.
+- **Embedding model experiments (Phase 10):** a candidate model gets a database of its own on the same server, named by `database_name` in an experiment config that `extends` `config.yaml`. Migrations build its `vector(embed.dims)` columns, and a config whose size differs from its database's is refused. Parsing and captions are reused; only indexing runs again. The winner is kept by the blue-green steps above, or by pointing production at its database.
 - **Schema migrations:** versioned SQL files in `db/migrations/`, applied in order.
 - **Backups:** managed snapshots or nightly `pg_dump` in production (NFR-10).
 
@@ -631,3 +632,4 @@ The set is a versioned file (`eval/golden_set.jsonl`). RAGAS's test-set generato
 | 0.7 | 2026-09-26 | **RAGAS evaluation.** Stack row (§4); golden-set entry fields and RAGAS test-set drafting (§9); metrics table rewritten with RAGAS (faithfulness, multimodal faithfulness, relevancy, context precision/recall, factual correctness, tool call accuracy) plus custom metrics; regression gate; judge reliability; two new risks; D14. |
 | 0.8 | 2026-09-27 | Testing row in §4 (pytest, markers, test database, mocked OpenAI, CI), following constitution W5. Decisions D1, D4, D6 and D14 recorded as decided. |
 | 0.9 | 2026-09-29 | **§6.3:** tables linked too; link rule 3 becomes the most related nearby paragraph (meaning + shared labels) or unlinked. **§7.1:** related items attached to search results. **Agent on LangGraph (D3 changed):** orchestration only, OpenAI SDK in nodes; Postgres checkpointer for multi-turn threads (FR-23). **Long-term memory:** FR-24, FR-25, NFR-13, new §7.8, memory component, stack rows, schema rows, validator rule, risks, D15. **No MCP server** (D16). All at the owner's request. |
+| 1.0 | 2026-10-09 | **Phase 10: local embedding models.** `embed.provider` (`openai` or `local`); EmbeddingGemma 2 through sentence-transformers with its task prompts (query, document, similarity); §6.5 experiment databases (`database_name`, config `extends`, vector size from `embed.dims`); the evaluation judge's embedding model fixed separately (`eval.judge_embed_model`). |

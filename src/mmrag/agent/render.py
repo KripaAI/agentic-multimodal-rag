@@ -16,7 +16,7 @@ from pathlib import Path
 
 from markdown_it import MarkdownIt
 
-from mmrag.agent.answer import HydratedBlock, HydratedCitation
+from mmrag.agent.answer import HydratedBlock, HydratedCitation, source_pages
 from mmrag.agent.graph import QueryRun
 from mmrag.config import Settings
 
@@ -103,8 +103,8 @@ def write_answer_page(question: str, run: QueryRun, settings: Settings) -> Path:
     a = run.answer
     has_chart = any(b.type == "chart" for b in a.blocks)
     notices = "".join(f'<p class="notice">{escape(x)}</p>' for x in a.notices)
-    sources = "".join(f"<li>{escape(s.source_file)}, p. {s.page} <span class=\"meta\">{escape(s.element_id)}</span></li>"
-                      for s in a.sources)
+    sources = "".join(f"<li>{escape(f)}, p. {pg}" + (f' <span class="meta">({n} passages)</span>' if n > 1 else "")
+                      + "</li>" for f, pg, n in source_pages(a.sources))
     cost = f"${run.cost_usd:.4f}" if run.cost_usd is not None else "cost n/a (model not priced)"
     endpoint = settings.observability.otlp_traces_endpoint or ""
     base = endpoint.rsplit("/v1/", 1)[0] if endpoint else ""

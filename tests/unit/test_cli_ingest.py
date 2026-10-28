@@ -95,3 +95,11 @@ def test_a_library_blocked_by_windows_points_to_the_docker_runner():
     e = ImportError("DLL load failed while importing _tiktoken: An Application Control policy has blocked this file.")
     msg = _friendly_error(e)
     assert "Smart App Control" in msg and "docker compose run --rm ingest" in msg
+
+
+def test_ingest_index_help_includes_no_db(cli_env):
+    env, _ = cli_env
+    r = _run(env, "ingest", "index", "--help")
+    assert r.returncode == 0
+    assert "--no-db" in r.stdout
+

@@ -46,7 +46,11 @@ def _pieces(block: Element, limit: int) -> list[str]:
     tokens = _encoder().encode(block.text)
     if len(tokens) <= limit:
         return [block.text]
-    return [_encoder().decode(tokens[i:i + limit]) for i in range(0, len(tokens), limit)]
+    # Cut at token boundaries but slice the text by character: a token can hold part of a multi-byte
+    # character (Devanagari), and decoding a token range would leave U+FFFD on both sides of the cut.
+    _, offsets = _encoder().decode_with_offsets(tokens)
+    starts = sorted({offsets[i] for i in range(0, len(tokens), limit)})
+    return [block.text[a:b] for a, b in zip(starts, starts[1:] + [len(block.text)])]
 
 
 def chunk_text(doc: LoadedDoc, cfg: ChunkConfig) -> list[Chunk]:
@@ -103,6 +107,12 @@ def build_figure_docs(doc: LoadedDoc, links: list[Link]) -> list[Chunk]:
             parts.append("Labels: " + " | ".join(fig.text.splitlines()))
         if fig.caption:
             parts.append(f"Caption: {fig.caption}")
+        if fig.element_id in doc.chart_text:  # where each planet sits: the VLM caption only lists them
+            parts.append(f"Placements: {doc.chart_text[fig.element_id]}")
+        if not parts:
+            # Nothing describes it: no VLM caption, no labels of its own, no printed caption. Typically
+            # the full-page image of a scanned book, whose words are the page's text or transcript.
+            continue
         if fig.section_path:
             parts.append("Section: " + " > ".join(fig.section_path))
         parts += [f"Context: {t}" for t in linked.get(fig.element_id, [])]

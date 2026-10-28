@@ -92,3 +92,13 @@ class HydratedAnswer(_Model):
     blocks: list[HydratedBlock]
     sources: list[Source]
     notices: list[str] = []  # e.g. "a chart was removed because a value could not be verified"
+
+
+def source_pages(sources: list) -> list[tuple[str, int, int]]:
+    """(file, page, passages cited on it), in first-cited order. A cited chunk lists every paragraph
+    it covers as a source; shown one by one, a single citation became a dozen lines."""
+    pages: dict[tuple[str, int], int] = {}
+    for s in sources:
+        key = (s["source_file"], s["page"]) if isinstance(s, dict) else (s.source_file, s.page)
+        pages[key] = pages.get(key, 0) + 1
+    return [(f, pg, n) for (f, pg), n in pages.items()]

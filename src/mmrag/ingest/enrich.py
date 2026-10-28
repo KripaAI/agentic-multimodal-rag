@@ -18,6 +18,7 @@ from pathlib import Path
 from typing import Callable
 
 from mmrag.config import Enrich
+from mmrag.fsutil import jsonl_lines
 from mmrag.index.document import Link, LoadedDoc
 from mmrag.ingest.models import Element, Table
 
@@ -225,7 +226,7 @@ def summarize_tables(tables: list[Table], model: str, chat: ChatFn, cache_path: 
     """A summary per table (by element_id), cached by (table content, model) in `cache_path`."""
     cache: dict[str, str] = {}
     if cache_path.is_file():
-        for line in cache_path.read_text(encoding="utf-8").splitlines():
+        for line in jsonl_lines(cache_path):
             if line:
                 row = json.loads(line)
                 cache[row["key"]] = row["summary"]

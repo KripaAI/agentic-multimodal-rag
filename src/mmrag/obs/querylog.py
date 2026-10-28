@@ -25,6 +25,25 @@ def cost_usd(model: str, input_tokens: int, output_tokens: int, settings: Settin
     return round((input_tokens * price.input_per_mtok + output_tokens * price.output_per_mtok) / 1_000_000, 6)
 
 
+def log_chart_turn(settings: Settings, user_id: str | None, thread_id: str, question: str, answer: dict,
+                   model: str, latency_ms: int, birth: dict | None, followup: bool) -> str:
+    """A birth-chart reading or follow-up from the chat, stored like any other turn so the conversation can be
+    reopened from the sidebar. `birth` (the details the chart was computed from) goes into answer_json, so a
+    reopened conversation still answers follow-ups from the same chart."""
+    import uuid
+
+    stored = dict(answer, birth=birth) if birth else answer
+    with db.connect(settings) as conn:
+        row = conn.execute(
+            "INSERT INTO query_log (user_id, thread_id, trace_id, question, qtype, model, rounds, tool_calls, "
+            "tokens_in, tokens_out, cost_usd, latency_ms, validator_result, answer_json) "
+            "VALUES (%s,%s,%s,%s,%s,%s,1,%s,0,0,NULL,%s,'ok',%s) RETURNING query_id",
+            (user_id, thread_id, uuid.uuid4().hex, question, "chart_followup" if followup else "chart_reading",
+             model, Jsonb([]), latency_ms, Jsonb(stored))).fetchone()
+        conn.commit()
+    return str(row[0])
+
+
 def log_query(question: str, run: "QueryRun", settings: Settings, user_id: str | None = None) -> str:
     """Insert the row and return its query_id."""
     with db.connect(settings) as conn:
